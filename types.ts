@@ -113,7 +113,7 @@ export interface AppConfig {
   telegramBotToken: string;
   telegramChatId: string;
   webhookUrl: string;
-  webhookSecret: string; // الحقل الجديد "السر"
+  webhookSecret: string;
   riskRewardRatio: number;
   cooldownHours: number;
   autoExecution: boolean;
@@ -131,6 +131,8 @@ export interface AppConfig {
   hunterMode: boolean;
   globalProfitTargetUSD: number; 
   perTradeProfitTargetUSD: number;
+  maxOpenTrades: number; // السيف لعدد الصفقات
+  disableInitialSL: boolean; // تعطيل الستوب لوز الابتدائي
 }
 
 export interface DeribitBookSummary {

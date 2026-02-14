@@ -11,7 +11,7 @@ import MarketStats from './components/MarketStats';
 import TradeLog from './components/TradeLog';
 import SignalCard from './components/SignalCard';
 
-const CURRENT_VERSION = '28.8.0'; 
+const CURRENT_VERSION = '29.2.0'; 
 const MIN_SCORE_THRESHOLD = 75; 
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -35,7 +35,9 @@ const DEFAULT_CONFIG: AppConfig = {
   secureHedgeTrades: true,
   hunterMode: true,
   globalProfitTargetUSD: 1000,
-  perTradeProfitTargetUSD: 100
+  perTradeProfitTargetUSD: 100,
+  maxOpenTrades: 5,
+  disableInitialSL: true
 };
 
 const App: React.FC = () => {
@@ -80,19 +82,34 @@ const App: React.FC = () => {
 
   const handleSendSignal = async (signal: TradingSignal, overrideAction?: any): Promise<boolean> => {
     const assetPure = signal.asset.split('-')[0];
+    
+    // فحص عدد الصفقات المفتوحة (السيف)
+    if (managedTrades.length >= config.maxOpenTrades && !overrideAction) {
+        addLog(`حظر: تم الوصول للحد الأقصى من الصفقات (${config.maxOpenTrades})`, 'RISK');
+        return false;
+    }
+
     if (bridgeStatus === false) {
       addLog(`فشل الإرسال: الجسر غير متصل`, 'ERROR');
       return false;
     }
+
     let actionType: any = overrideAction || 'ENTRY';
+    
+    // إذا كان خيار تعطيل الستوب لوز الابتدائي مفعلاً، نقوم بتصفيره قبل الإرسال
+    const finalSignal = { ...signal };
+    if (config.disableInitialSL && actionType === 'ENTRY') {
+        finalSignal.stopLoss = 0;
+    }
+
     if (sendingRef.current[signal.id]) return false;
     sendingRef.current[signal.id] = true;
 
     try {
-        const result = await sendToWebhook(signal, config.webhookUrl, 0.0, actionType, config.maxAllocationPerTrade, config.webhookSecret);
+        const result = await sendToWebhook(finalSignal, config.webhookUrl, 0.0, actionType, config.maxAllocationPerTrade, config.webhookSecret);
         if (result.success) {
             if (config.telegramBotToken && config.telegramChatId) {
-                sendSignalToTelegram(signal, config.telegramChatId, config.telegramBotToken, actionType, signal.reasoning, config.webhookUrl).catch(() => {});
+                sendSignalToTelegram(finalSignal, config.telegramChatId, config.telegramBotToken, actionType, finalSignal.reasoning, config.webhookUrl).catch(() => {});
             }
             if (!overrideAction) sentSignalsRef.current.add(signal.id);
             addLog(`✅ EXEC: ${actionType} ${assetPure}`, 'EXEC');
@@ -124,8 +141,6 @@ const App: React.FC = () => {
           
           if (signal && !sentSignalsRef.current.has(signal.id)) {
                setSignals(prev => [signal, ...prev].slice(0, 50));
-               
-               // نظام "الصياد" - One Trade Hunter Logic
                const canExecute = config.autoExecution && 
                                   (!config.hunterMode || signal.qualityScore >= MIN_SCORE_THRESHOLD) && 
                                   !newsGuard.isPaused;
@@ -304,52 +319,83 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                {activeTab === 'NEWS' && (
+                {activeTab === 'RISK' && (
                     <div className="space-y-10 animate-in slide-in-from-left duration-500">
                         <header>
-                            <h3 className="text-3xl font-black text-white mb-3">رادار الأخبار (News Shield)</h3>
-                            <p className="text-zinc-500 text-sm">توقف عن التداول تلقائياً خلال الأخبار عالية التأثير.</p>
+                            <h3 className="text-3xl font-black text-white mb-3">إدارة المخاطر والتعرض</h3>
+                            <p className="text-zinc-500 text-sm">تحكم في حجم الحصص وبروتوكولات حماية رأس المال.</p>
                         </header>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="p-8 bg-zinc-950/50 rounded-[2.5rem] border border-zinc-800 space-y-6">
-                                <h4 className="text-xs font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">مواقيت الحماية</h4>
+                            <div className="p-10 bg-zinc-950/50 rounded-[3rem] border border-zinc-800 space-y-8">
+                                <h4 className="text-sm font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">إعدادات الدخول والعدد</h4>
+                                
                                 <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الإيقاف قبل الخبر (دقائق)</label>
+                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">سيف عدد الصفقات (Max Concurrent)</label>
                                     <input 
                                         type="number" 
-                                        value={config.newsBypassMinutes} 
-                                        onChange={(e)=>setConfig({...config, newsBypassMinutes: parseInt(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
+                                        value={config.maxOpenTrades} 
+                                        onChange={(e)=>setConfig({...config, maxOpenTrades: parseInt(e.target.value)})} 
+                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
                                     />
                                 </div>
+
+                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                                    <div className="flex flex-col">
+                                        <span className="text-xs font-black text-white uppercase">No Initial SL</span>
+                                        <span className="text-[9px] text-zinc-500 font-bold">تعطيل الوقف الابتدائي لتفعيل الهيدج</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => setConfig({...config, disableInitialSL: !config.disableInitialSL})}
+                                        className={`w-14 h-8 rounded-full transition-all relative ${config.disableInitialSL ? 'bg-rose-500' : 'bg-zinc-800'}`}
+                                    >
+                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.disableInitialSL ? 'left-7' : 'left-1'}`}></div>
+                                    </button>
+                                </div>
+
                                 <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">فترة التبريد بعد الخبر (دقائق)</label>
+                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">حجم اللوت الافتراضي (Default Lot)</label>
                                     <input 
                                         type="number" 
-                                        value={config.newsCooldownMinutes} 
-                                        onChange={(e)=>setConfig({...config, newsCooldownMinutes: parseInt(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
+                                        step="0.01"
+                                        value={config.maxAllocationPerTrade} 
+                                        onChange={(e)=>setConfig({...config, maxAllocationPerTrade: parseFloat(e.target.value)})} 
+                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
                                     />
                                 </div>
                             </div>
 
-                            <div className="p-8 bg-zinc-950/50 rounded-[2.5rem] border border-zinc-800">
-                                <h4 className="text-xs font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4 mb-6">الأحداث القادمة</h4>
-                                <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar">
-                                    {newsEvents.length === 0 ? (
-                                        <p className="text-zinc-700 text-center py-10 font-black uppercase text-[10px] tracking-widest">لا توجد أخبار عالية التأثير قريباً</p>
-                                    ) : (
-                                        newsEvents.map(event => (
-                                            <div key={event.id} className="p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800 flex justify-between items-center">
-                                                <div>
-                                                    <span className="block text-white text-[11px] font-black">{event.name}</span>
-                                                    <span className="text-[9px] text-zinc-600 uppercase font-bold">{event.currency} | {new Date(event.timestamp).toLocaleString()}</span>
-                                                </div>
-                                                <span className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[8px] font-black rounded-md">HIGH</span>
-                                            </div>
-                                        ))
-                                    )}
+                            <div className="p-10 bg-zinc-950/50 rounded-[3rem] border border-zinc-800 space-y-8">
+                                <h4 className="text-sm font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">حماية رأس المال</h4>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الخروج عند خسارة (%) من الرصيد</label>
+                                    <input 
+                                        type="number" 
+                                        value={config.equityProtectionPercent} 
+                                        onChange={(e)=>setConfig({...config, equityProtectionPercent: parseFloat(e.target.value)})} 
+                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                                    <span className="text-xs font-black text-zinc-400">التنفيذ التلقائي (Auto Exec)</span>
+                                    <button 
+                                        onClick={() => setConfig({...config, autoExecution: !config.autoExecution})}
+                                        className={`w-14 h-8 rounded-full transition-all relative ${config.autoExecution ? 'bg-amber-500' : 'bg-zinc-800'}`}
+                                    >
+                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.autoExecution ? 'left-7' : 'left-1'}`}></div>
+                                    </button>
+                                </div>
+                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                                    <div className="flex flex-col">
+                                        <span className="text-xs font-black text-white uppercase">Hedge Mode Active</span>
+                                        <span className="text-[9px] text-zinc-500 font-bold">تفعيل التحوط التلقائي عند انعكاس الإشارة</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => setConfig({...config, autoHedgeEnabled: !config.autoHedgeEnabled})}
+                                        className={`w-14 h-8 rounded-full transition-all relative ${config.autoHedgeEnabled ? 'bg-emerald-500' : 'bg-zinc-800'}`}
+                                    >
+                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.autoHedgeEnabled ? 'left-7' : 'left-1'}`}></div>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -386,161 +432,12 @@ const App: React.FC = () => {
                                         className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
                                     />
                                 </div>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">نسبة الإغلاق الجزئي (%)</label>
-                                    <input 
-                                        type="number" 
-                                        value={config.partialClosePercent} 
-                                        onChange={(e)=>setConfig({...config, partialClosePercent: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="p-10 bg-zinc-950/50 rounded-[3rem] border border-zinc-800 space-y-8">
-                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
-                                    <div className="flex flex-col">
-                                        <span className="text-xs font-black text-white uppercase">Auto-Hedge Layer</span>
-                                        <span className="text-[9px] text-zinc-500 font-bold">فتح مراكز حماية تلقائية عند تقلب الاتجاه</span>
-                                    </div>
-                                    <button 
-                                        onClick={() => setConfig({...config, autoHedgeEnabled: !config.autoHedgeEnabled})}
-                                        className={`w-14 h-8 rounded-full transition-all relative ${config.autoHedgeEnabled ? 'bg-amber-500' : 'bg-zinc-800'}`}
-                                    >
-                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.autoHedgeEnabled ? 'left-7' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">خطوة تتبع الربح (Trailing Step)</label>
-                                    <input 
-                                        type="number" 
-                                        value={config.trailingStepPoints} 
-                                        onChange={(e)=>setConfig({...config, trailingStepPoints: parseInt(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
-                                    <span className="text-xs font-black text-white uppercase">Secure Hedge Trades</span>
-                                    <button 
-                                        onClick={() => setConfig({...config, secureHedgeTrades: !config.secureHedgeTrades})}
-                                        className={`w-14 h-8 rounded-full transition-all relative ${config.secureHedgeTrades ? 'bg-amber-500' : 'bg-zinc-800'}`}
-                                    >
-                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.secureHedgeTrades ? 'left-7' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {activeTab === 'RISK' && (
-                    <div className="space-y-10 animate-in slide-in-from-left duration-500">
-                        <header>
-                            <h3 className="text-3xl font-black text-white mb-3">إدارة المخاطر والتعرض</h3>
-                            <p className="text-zinc-500 text-sm">تحكم في حجم الحصص وبروتوكولات حماية رأس المال.</p>
-                        </header>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="p-10 bg-zinc-950/50 rounded-[3rem] border border-zinc-800 space-y-8">
-                                <h4 className="text-sm font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">إعدادات الدخول</h4>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">حجم اللوت الافتراضي (Default Lot)</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.01"
-                                        value={config.maxAllocationPerTrade} 
-                                        onChange={(e)=>setConfig({...config, maxAllocationPerTrade: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">نسبة المخاطرة للعائد (Risk/Reward)</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.1"
-                                        value={config.riskRewardRatio} 
-                                        onChange={(e)=>setConfig({...config, riskRewardRatio: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="p-10 bg-zinc-950/50 rounded-[3rem] border border-zinc-800 space-y-8">
-                                <h4 className="text-sm font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">حماية رأس المال</h4>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الخروج عند خسارة (%) من الرصيد</label>
-                                    <input 
-                                        type="number" 
-                                        value={config.equityProtectionPercent} 
-                                        onChange={(e)=>setConfig({...config, equityProtectionPercent: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                                <div className="flex items-center justify-between p-4 bg-zinc-900/50 rounded-2xl border border-zinc-800">
-                                    <span className="text-xs font-black text-zinc-400">التنفيذ التلقائي (Auto Exec)</span>
-                                    <button 
-                                        onClick={() => setConfig({...config, autoExecution: !config.autoExecution})}
-                                        className={`w-14 h-8 rounded-full transition-all relative ${config.autoExecution ? 'bg-amber-500' : 'bg-zinc-800'}`}
-                                    >
-                                        <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-all ${config.autoExecution ? 'left-7' : 'left-1'}`}></div>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'SYSTEM' && (
-                    <div className="space-y-12 animate-in slide-in-from-left duration-500">
-                        <header>
-                            <h3 className="text-3xl font-black text-white mb-3">إدارة النظام والبيانات</h3>
-                            <p className="text-zinc-500 text-sm">تتبع الأهداف الكلية وإعادة تعيين النظام.</p>
-                        </header>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="p-8 bg-zinc-950/50 rounded-[2.5rem] border border-zinc-800 space-y-6">
-                                <h4 className="text-xs font-black text-amber-500 uppercase tracking-widest border-b border-zinc-800 pb-4">الأهداف الربحية (USD)</h4>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">هدف الربح الكلي للمشروع</label>
-                                    <input 
-                                        type="number" 
-                                        value={config.globalProfitTargetUSD} 
-                                        onChange={(e)=>setConfig({...config, globalProfitTargetUSD: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">هدف الربح لكل صفقة</label>
-                                    <input 
-                                        type="number" 
-                                        value={config.perTradeProfitTargetUSD} 
-                                        onChange={(e)=>setConfig({...config, perTradeProfitTargetUSD: parseFloat(e.target.value)})} 
-                                        className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="p-8 bg-rose-950/10 rounded-[2.5rem] border border-rose-900/20 flex flex-col justify-between">
-                                <div>
-                                    <h4 className="text-xs font-black text-rose-500 uppercase tracking-widest border-b border-rose-900/30 pb-4 mb-6">منطقة الخطر</h4>
-                                    <p className="text-zinc-500 text-[10px] font-medium leading-relaxed mb-6">سيؤدي هذا الإجراء إلى مسح كافة الإعدادات الحالية من الذاكرة المحلية وإعادة ضبط المصنع.</p>
-                                </div>
-                                <button 
-                                    onClick={() => {
-                                        if(confirm('هل أنت متأكد من إعادة ضبط المصنع؟')) {
-                                            localStorage.removeItem(`arkon_config_v${CURRENT_VERSION}`);
-                                            window.location.reload();
-                                        }
-                                    }}
-                                    className="w-full py-4 rounded-xl bg-rose-600/20 border border-rose-600/30 text-rose-500 font-black uppercase text-[10px] tracking-[0.2em] hover:bg-rose-600 hover:text-white transition-all"
-                                >
-                                    إعادة ضبط المحرك (RESET ALL)
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
+                {/* بقية التبويبات المتبقية */}
                 {activeTab === 'NOTIF' && (
                     <div className="space-y-10 animate-in slide-in-from-left duration-500">
                          <header>
@@ -556,7 +453,6 @@ const App: React.FC = () => {
                                         type="text" 
                                         value={config.telegramBotToken} 
                                         onChange={(e)=>setConfig({...config, telegramBotToken: e.target.value})} 
-                                        placeholder="000000000:AA..."
                                         className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-indigo-500 font-mono text-left" dir="ltr"
                                     />
                                 </div>
@@ -566,44 +462,63 @@ const App: React.FC = () => {
                                         type="text" 
                                         value={config.telegramChatId} 
                                         onChange={(e)=>setConfig({...config, telegramChatId: e.target.value})} 
-                                        placeholder="-100..."
                                         className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-8 py-5 text-white outline-none focus:border-indigo-500 font-mono text-left" dir="ltr"
                                     />
                                 </div>
                             </div>
-                            
-                            <button 
-                                onClick={handleTestTg}
-                                disabled={isTestingTg || !config.telegramBotToken}
-                                className="w-full py-5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest transition-all disabled:opacity-50 flex items-center justify-center gap-4"
-                            >
-                                {isTestingTg ? <i className="fas fa-circle-notch animate-spin"></i> : <i className="fas fa-vial"></i>}
-                                اختبار الاتصال بالتليجرام
-                            </button>
                         </div>
                     </div>
                 )}
-                
+
                 {activeTab === 'EA' && (
                     <div className="space-y-10 animate-in slide-in-from-left duration-500">
                         <header>
                             <h3 className="text-3xl font-black text-white mb-3">كود المستشار الخبير (MQL5 EA)</h3>
                             <p className="text-zinc-500 text-sm">انسخ الكود التالي وضعه في MetaEditor 5 للربط مع المنصة.</p>
                         </header>
+                        <div className="bg-zinc-950 border border-zinc-800 rounded-[2.5rem] p-10 h-[500px] overflow-auto custom-scrollbar font-mono text-[11px] text-zinc-400 leading-relaxed text-left" dir="ltr">
+                            <pre>{MQL5_CODE}</pre>
+                        </div>
+                    </div>
+                )}
 
-                        <div className="relative group">
-                            <div className="absolute top-6 left-6 flex gap-4 z-10">
-                                <button 
-                                    onClick={() => handleCopyCode('MQL', MQL5_CODE)}
-                                    className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-3 rounded-xl text-xs font-black transition-all flex items-center gap-3 border border-zinc-700"
-                                >
-                                    <i className={`fas fa-${copiedType === 'MQL' ? 'check text-emerald-500' : 'copy'}`}></i>
-                                    {copiedType === 'MQL' ? 'تم النسخ' : 'نسخ الكود'}
-                                </button>
+                {activeTab === 'NEWS' && (
+                    <div className="space-y-10 animate-in slide-in-from-left duration-500">
+                        <header>
+                            <h3 className="text-3xl font-black text-white mb-3">رادار الأخبار (News Shield)</h3>
+                            <p className="text-zinc-500 text-sm">توقف عن التداول تلقائياً خلال الأخبار عالية التأثير.</p>
+                        </header>
+                        <div className="p-8 bg-zinc-950/50 rounded-[2.5rem] border border-zinc-800 space-y-6">
+                            <div className="space-y-4">
+                                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block">الإيقاف قبل الخبر (دقائق)</label>
+                                <input 
+                                    type="number" 
+                                    value={config.newsBypassMinutes} 
+                                    onChange={(e)=>setConfig({...config, newsBypassMinutes: parseInt(e.target.value)})} 
+                                    className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl px-6 py-4 text-white outline-none focus:border-amber-500 font-mono" 
+                                />
                             </div>
-                            <div className="bg-zinc-950 border border-zinc-800 rounded-[2.5rem] p-10 h-[500px] overflow-auto custom-scrollbar font-mono text-[11px] text-zinc-400 leading-relaxed text-left" dir="ltr">
-                                <pre>{MQL5_CODE}</pre>
-                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'SYSTEM' && (
+                    <div className="space-y-10 animate-in slide-in-from-left duration-500">
+                         <header>
+                            <h3 className="text-3xl font-black text-white mb-3">إدارة النظام والبيانات</h3>
+                        </header>
+                        <div className="p-8 bg-rose-950/10 rounded-[2.5rem] border border-rose-900/20">
+                            <button 
+                                onClick={() => {
+                                    if(confirm('إعادة ضبط المصنع؟')) {
+                                        localStorage.removeItem(`arkon_config_v${CURRENT_VERSION}`);
+                                        window.location.reload();
+                                    }
+                                }}
+                                className="w-full py-4 rounded-xl bg-rose-600/20 border border-rose-600/30 text-rose-500 font-black uppercase text-[10px] tracking-[0.2em] hover:bg-rose-600 hover:text-white transition-all"
+                            >
+                                إعادة ضبط المحرك (RESET ALL)
+                            </button>
                         </div>
                     </div>
                 )}
@@ -648,22 +563,28 @@ const App: React.FC = () => {
 
       {/* Dashboard Grid */}
       <main className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-stretch h-full">
-          
-          {/* Market Scanners */}
           <div className="xl:col-span-8 space-y-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
                   <MarketStats title="BITCOIN CORE" state={btcAnalysis} />
                   <MarketStats title="ETHEREUM CORE" state={ethAnalysis} />
               </div>
 
-              {/* Trading Signals Section */}
               <div className="glass-card rounded-[3rem] p-10 border border-zinc-800">
                   <div className="flex justify-between items-center mb-8">
                       <div className="flex items-center gap-4">
                           <div className="w-1.5 h-6 bg-amber-500 rounded-full"></div>
                           <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Signal <span className="text-zinc-600">Archive</span></h3>
                       </div>
-                      <span className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">Last 50 Transmissions</span>
+                      <div className="flex items-center gap-4">
+                          <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-xl flex items-center gap-2">
+                               <span className="text-[10px] font-black text-zinc-500 uppercase">Live Hedge:</span>
+                               <span className={`text-[10px] font-black ${config.disableInitialSL ? 'text-emerald-500' : 'text-zinc-600'}`}>{config.disableInitialSL ? 'ACTIVE (NO SL)' : 'INACTIVE'}</span>
+                          </div>
+                          <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-xl flex items-center gap-2">
+                               <span className="text-[10px] font-black text-zinc-500 uppercase">Cap:</span>
+                               <span className="text-[10px] font-black text-amber-500">{managedTrades.length}/{config.maxOpenTrades}</span>
+                          </div>
+                      </div>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -688,10 +609,7 @@ const App: React.FC = () => {
               </div>
           </div>
 
-          {/* Side Panel: Open Trades & System Logs */}
           <div className="xl:col-span-4 space-y-8 flex flex-col h-full">
-              
-              {/* Active Positions */}
               <div className="glass-card rounded-[3rem] border border-zinc-800 p-8 flex flex-col gap-6 bg-zinc-950/30">
                   <div className="flex justify-between items-center">
                       <h3 className="text-lg font-black text-white uppercase tracking-widest">Active <span className="text-zinc-600">Positions</span></h3>
@@ -725,7 +643,6 @@ const App: React.FC = () => {
                   </div>
               </div>
 
-              {/* System Logs */}
               <div className="flex-1 min-h-[400px]">
                   <TradeLog 
                       logs={logs} 
@@ -740,13 +657,8 @@ const App: React.FC = () => {
           </div>
       </main>
 
-      {/* Footer Info */}
       <footer className="mt-12 pt-8 border-t border-zinc-900/50 flex justify-between items-center text-zinc-700">
            <div className="text-[10px] font-black uppercase tracking-[0.3em]">ARKON PRIME // QUANTITATIVE RESEARCH DIVISION</div>
-           <div className="flex gap-8 text-[10px] font-black uppercase tracking-widest">
-               <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-zinc-800"></div> Latency: {isProcessing ? '...' : '24ms'}</span>
-               <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-zinc-800"></div> Uptime: 99.9%</span>
-           </div>
       </footer>
     </div>
   );
