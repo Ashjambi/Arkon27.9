@@ -1,0 +1,28 @@
+
+# .github/workflows/daily-signals.yml
+# This workflow runs a Node script that uses the same logic as the frontend 
+# but delivers directly to Telegram every morning.
+
+name: Daily Signal Generator
+
+on:
+  schedule:
+    - cron: '0 7 * * *' # 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm install
+      - name: Run Signal Script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: npx ts-node services/scheduler_script.ts
