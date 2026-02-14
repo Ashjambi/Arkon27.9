@@ -8,87 +8,85 @@ interface MarketStatsProps {
 }
 
 const MarketStats: React.FC<MarketStatsProps> = ({ state, title }) => {
-  if (!state) return <div className="glass-card rounded-[1.5rem] p-6 h-[420px] animate-pulse bg-zinc-900/20"></div>;
+  if (!state) return (
+    <div className="glass-card rounded-[2.5rem] p-10 h-[480px] border border-zinc-800 bg-zinc-950/20 flex flex-col justify-center items-center text-center gap-6">
+        <div className="w-20 h-20 rounded-full border-4 border-zinc-900 border-t-amber-500 animate-spin flex items-center justify-center">
+            <i className="fas fa-satellite-dish text-2xl text-amber-500/50"></i>
+        </div>
+        <div>
+            <h3 className="text-zinc-600 font-black text-lg uppercase tracking-[0.3em] mb-2">{title}</h3>
+            <p className="text-[10px] text-zinc-800 font-bold uppercase tracking-widest">جاري سحب بيانات دفتر الأوامر والسيولة...</p>
+        </div>
+    </div>
+  );
 
   const isUp = state.trendDirection === 'UP';
   const isHunterReady = state.qualityScore > 80;
 
   return (
-    <div className="glass-card rounded-[2rem] overflow-hidden border border-zinc-800 flex flex-col h-full min-h-[450px] relative group transition-all" dir="ltr">
+    <div className="glass-card rounded-[3rem] overflow-hidden border border-zinc-800 flex flex-col h-full min-h-[480px] relative group transition-all hover:border-amber-500/20" dir="ltr">
       
       {/* MTF ALIGNMENT BAR */}
-      <div className="absolute top-0 left-0 right-0 h-1 flex">
-          <div className={`flex-1 ${state.mtfStatus.dailyTrend === 'UP' ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
-          <div className={`flex-1 ${state.regime !== 'CHOPPY/NOISE' ? 'bg-indigo-500' : 'bg-zinc-800'}`}></div>
-          <div className={`flex-1 ${state.mtfStatus.m15Trigger ? 'bg-amber-500' : 'bg-zinc-800'}`}></div>
+      <div className="absolute top-0 left-0 right-0 h-1.5 flex p-[1px] bg-zinc-900">
+          <div className={`flex-1 rounded-l-full transition-all duration-700 ${state.mtfStatus.dailyTrend === 'UP' ? 'bg-emerald-500' : 'bg-rose-500'} opacity-80`}></div>
+          <div className={`flex-1 transition-all duration-700 ${state.regime !== 'CHOPPY/NOISE' ? 'bg-indigo-500' : 'bg-zinc-800'} opacity-80`}></div>
+          <div className={`flex-1 rounded-r-full transition-all duration-700 ${state.mtfStatus.m15Trigger ? 'bg-amber-500' : 'bg-zinc-800'} opacity-80`}></div>
       </div>
 
-      <div className="p-6 border-b border-zinc-800/60 bg-zinc-900/40">
-          <div className="flex justify-between items-start">
+      <div className="p-8 border-b border-zinc-900/60 bg-zinc-900/20">
+          <div className="flex justify-between items-start mb-6">
               <div>
-                  <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">Quantum Radar</span>
-                      <i className="fas fa-crosshairs text-[10px] text-zinc-600"></i>
+                  <div className="flex items-center gap-3 mb-2">
+                      <span className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] bg-amber-500/5 border border-amber-500/10 px-3 py-1 rounded-md">Quantum Radar</span>
                   </div>
-                  <h3 className="text-3xl font-black text-white tracking-tighter">{title}</h3>
+                  <h3 className="text-4xl font-black text-white tracking-tighter uppercase">{title}</h3>
               </div>
               <div className="text-right">
-                  <div className="text-[9px] font-black text-zinc-500 uppercase mb-1">Daily Trend</div>
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-black ${isUp ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                  <div className="text-[10px] font-black text-zinc-600 uppercase mb-2 tracking-widest">Current Trend</div>
+                  <span className={`px-4 py-2 rounded-xl text-[11px] font-black border uppercase tracking-widest ${isUp ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500' : 'bg-rose-500/5 border-rose-500/20 text-rose-500'}`}>
                       {state.mtfStatus.dailyTrend}
                   </span>
               </div>
           </div>
-          <div className="mt-4 flex items-baseline gap-2">
-              <span className="text-4xl font-mono font-bold text-white">${state.price.toLocaleString()}</span>
-              <span className="text-xs text-zinc-500 font-mono">USD</span>
+          <div className="flex items-baseline gap-3">
+              <span className="text-5xl font-mono font-black text-white tracking-tighter">${state.price.toLocaleString(undefined, {minimumFractionDigits: 1})}</span>
+              <span className="text-xs text-zinc-600 font-bold uppercase tracking-widest">USD SPOT</span>
           </div>
       </div>
 
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 p-8 space-y-8">
           {/* HUNTER GAUGE */}
-          <div className="bg-black/40 rounded-3xl p-5 border border-zinc-800/50 relative overflow-hidden">
-              <div className="flex justify-between items-center mb-4 relative z-10">
-                  <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Hunter Precision</span>
-                  <span className={`text-xl font-black ${isHunterReady ? 'text-amber-500' : 'text-zinc-600'}`}>{Math.round(state.qualityScore)}%</span>
+          <div className="bg-black/40 rounded-[2rem] p-8 border border-zinc-800/50 relative overflow-hidden group/gauge">
+              <div className="flex justify-between items-center mb-5 relative z-10">
+                  <span className="text-[11px] font-black text-zinc-400 uppercase tracking-widest">Hunter Accuracy Score</span>
+                  <span className={`text-2xl font-mono font-black ${isHunterReady ? 'text-amber-500' : 'text-zinc-700'}`}>{Math.round(state.qualityScore)}%</span>
               </div>
-              <div className="h-2 w-full bg-zinc-900 rounded-full overflow-hidden relative z-10">
-                  <div className={`h-full transition-all duration-1000 ${isHunterReady ? 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]' : 'bg-zinc-700'}`} style={{width: `${state.qualityScore}%`}}></div>
+              <div className="h-3 w-full bg-zinc-900 rounded-full overflow-hidden relative z-10 border border-zinc-800 p-[2px]">
+                  <div className={`h-full transition-all duration-1000 rounded-full ${isHunterReady ? 'bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.4)]' : 'bg-zinc-800'}`} style={{width: `${state.qualityScore}%`}}></div>
               </div>
-              <div className="mt-3 flex justify-between text-[8px] font-black text-zinc-600 uppercase tracking-tighter">
-                  <span>Searching</span>
-                  <span>Locked</span>
-                  <span>Execution</span>
-              </div>
-          </div>
-
-          {/* MTF SUMMARY */}
-          <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-all">
-                  <span className="text-[8px] font-black text-zinc-500 uppercase block mb-1">Hurst Exponent</span>
-                  <span className="text-lg font-mono font-bold text-indigo-400">{state.hurst.toFixed(2)}</span>
-              </div>
-              <div className="p-4 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-700 transition-all">
-                  <span className="text-[8px] font-black text-zinc-500 uppercase block mb-1">Volatility (DVOL)</span>
-                  <span className="text-lg font-mono font-bold text-purple-400">{state.dvol.toFixed(1)}</span>
+              <div className="mt-5 flex justify-between text-[9px] font-black text-zinc-600 uppercase tracking-widest">
+                  <span className={state.qualityScore < 40 ? 'text-zinc-400' : ''}>Idle</span>
+                  <span className={state.qualityScore >= 40 && state.qualityScore < 80 ? 'text-zinc-400' : ''}>Scanning</span>
+                  <span className={state.qualityScore >= 80 ? 'text-amber-500 animate-pulse' : ''}>Target Locked</span>
               </div>
           </div>
 
-          {/* REAL-TIME LOGIC FEED */}
-          <div className="space-y-2">
-              <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
-                  <i className="fas fa-check-circle text-emerald-500"></i>
-                  <span>1D SMA-50: {state.mtfStatus.dailyTrend}</span>
+          <div className="grid grid-cols-2 gap-6">
+              <div className="p-6 rounded-3xl bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col gap-1">
+                  <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Statistical Hurst</span>
+                  <span className="text-xl font-mono font-bold text-indigo-400">{state.hurst.toFixed(3)}</span>
+                  <p className="text-[8px] text-zinc-700 font-black uppercase mt-1">Fractal Efficiency</p>
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-mono">
-                  <i className={`fas fa-${state.mtfStatus.m15Trigger ? 'check-circle text-emerald-500' : 'circle text-zinc-800'}`}></i>
-                  <span>M15 Z-Score: {state.zScore.toFixed(2)}σ</span>
+              <div className="p-6 rounded-3xl bg-zinc-900/40 border border-zinc-800 hover:border-zinc-700 transition-all flex flex-col gap-1">
+                  <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Volatility Index</span>
+                  <span className="text-xl font-mono font-bold text-purple-400">{state.dvol.toFixed(2)}</span>
+                  <p className="text-[8px] text-zinc-700 font-black uppercase mt-1">Real-time DVOL</p>
               </div>
           </div>
       </div>
 
-      <div className={`p-4 text-center font-black text-[10px] tracking-widest transition-all ${isHunterReady ? 'bg-amber-500 text-black' : 'bg-zinc-800 text-zinc-500'}`}>
-          {isHunterReady ? 'HUNTER PROTOCOL: ACTIVE 🎯' : 'SCANNING FOR ALIGNMENT 🛰️'}
+      <div className={`p-5 text-center font-black text-[11px] tracking-[0.4em] transition-all uppercase ${isHunterReady ? 'bg-amber-500 text-black shadow-[0_-10px_30px_rgba(245,158,11,0.2)]' : 'bg-zinc-900 text-zinc-700'}`}>
+          {isHunterReady ? 'SIGNAL ACQUIRED: READY FOR EXECUTION' : 'SCANNING FOR MTF ALIGNMENT...'}
       </div>
     </div>
   );

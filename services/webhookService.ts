@@ -24,7 +24,6 @@ export const clearRemoteBridge = async (url: string): Promise<boolean> => {
     } catch (e) { return false; }
 };
 
-// New Function to get Full State (Positions)
 export const fetchBridgeState = async (url: string): Promise<{positions: any[], queue_depth: number} | null> => {
     if (!url) return null;
     try {
@@ -39,50 +38,13 @@ export const fetchBridgeState = async (url: string): Promise<{positions: any[], 
     } catch (e) { return null; }
 };
 
-export const fetchBridgeUpdates = async (url: string): Promise<any[]> => {
-    // Legacy function support if needed, but fetchBridgeState is preferred now
-    return [];
-};
-
-export const sendTestPacket = async (url: string): Promise<{success: boolean; error?: string}> => {
-    if (!url) return { success: false, error: "URL missing" };
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            mode: 'cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: "TEST", symbol: "TEST-ARKON", type: "buy", price: 0, sl: 0, tp: 0, risk_pct: 0.01, lot_size: 0.01 })
-        });
-        return { success: response.ok };
-    } catch (e: any) { return { success: false, error: e.message }; }
-}
-
-export const sendEmergencySignal = async (url: string): Promise<{success: boolean; error?: string}> => {
-  if (!url) return { success: false, error: "URL missing" };
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      mode: 'cors',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: `PANIC-${Date.now()}`,
-        symbol: "GLOBAL", 
-        type: 'buy', 
-        price: 0, sl: 0, tp: 0,
-        action_type: 'CLOSE_ALL', 
-        timestamp: Date.now()
-      })
-    });
-    return { success: response.ok };
-  } catch (e) { return { success: false, error: "Bridge unreachable" }; }
-};
-
 export const sendToWebhook = async (
   signal: TradingSignal,
   url: string,
   executedRisk: number,
   actionType: 'ENTRY' | 'FLIP' | 'HEDGE' | 'BOOST' | 'EXIT' | 'UPDATE_SL' | 'SECURE' = 'ENTRY',
-  lotSize: number = 0 
+  lotSize: number = 0,
+  secret: string = '' // إضافة مفتاح الأمان
 ): Promise<{success: boolean; error?: string}> => {
   if (!url) return { success: false, error: "URL missing" };
   
@@ -114,7 +76,8 @@ export const sendToWebhook = async (
         close_opposite: closeOpposite,
         secure_amount: secureAmount,
         partial_percent: partialPercent, 
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        secret: secret // إرسال مفتاح الأمان للتحقق
       })
     });
     return { success: response.ok };

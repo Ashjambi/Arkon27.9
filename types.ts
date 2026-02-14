@@ -113,6 +113,7 @@ export interface AppConfig {
   telegramBotToken: string;
   telegramChatId: string;
   webhookUrl: string;
+  webhookSecret: string; // الحقل الجديد "السر"
   riskRewardRatio: number;
   cooldownHours: number;
   autoExecution: boolean;
