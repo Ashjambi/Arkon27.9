@@ -1,20 +1,43 @@
 
 import { EconomicEvent } from '../types';
 
-// ملاحظة: في بيئة حقيقية، سيتم جلب هذه البيانات من API مثل TradingView أو ForexFactory
-// تم تعطيل الأحداث الوهمية التلقائية لمنع تفعيل الدرع بشكل خاطئ.
-// يمكنك إضافة أحداث هنا يدوياً للاختبار بتواريخ محددة.
-const MOCK_EVENTS: EconomicEvent[] = [
-    // مثال لحدث مستقبلي بعيد (لن يفعل الدرع اليوم)
-    { id: '1', name: 'Next FED Meeting', impact: 'HIGH', currency: 'USD', timestamp: new Date('2025-03-20T18:00:00Z').getTime() },
+/**
+ * في بيئة الإنتاج، يتم جلب هذه البيانات من APIs مثل TradingView أو ForexFactory.
+ * هنا نقوم بتوليد أحداث ديناميكية بناءً على التاريخ الحالي لضمان عمل "الدرع الواقي".
+ */
+const getDynamicEvents = (): EconomicEvent[] => {
+    const now = new Date();
+    const today = now.getTime();
     
-    // مثال لحدث قديم (لن يفعل الدرع)
-    { id: '2', name: 'Previous CPI Data', impact: 'HIGH', currency: 'USD', timestamp: new Date('2025-01-15T13:30:00Z').getTime() } 
-];
+    return [
+        { 
+            id: 'fed-1', 
+            name: 'FED Interest Rate Decision', 
+            impact: 'HIGH', 
+            currency: 'USD', 
+            timestamp: today + (35 * 60 * 1000) // بعد 35 دقيقة من الآن (يفعل الدرع)
+        },
+        { 
+            id: 'cpi-1', 
+            name: 'US Core CPI m/m', 
+            impact: 'HIGH', 
+            currency: 'USD', 
+            timestamp: today - (15 * 60 * 1000) // منذ 15 دقيقة (في فترة التبريد)
+        },
+        { 
+            id: 'nfp-1', 
+            name: 'Non-Farm Employment Change', 
+            impact: 'HIGH', 
+            currency: 'USD', 
+            timestamp: today + (24 * 60 * 60 * 1000) // غداً
+        }
+    ];
+};
 
 export const getIncomingHighImpactEvents = async (): Promise<EconomicEvent[]> => {
-    // إرجاع القائمة (التي لا تحتوي حالياً على أحداث قريبة جداً)
-    return MOCK_EVENTS.filter(e => e.impact === 'HIGH');
+    // محاكاة تأخير الشبكة
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return getDynamicEvents();
 };
 
 export const checkNewsImpactStatus = (events: EconomicEvent[], bypassMins: number, cooldownMins: number) => {
@@ -22,12 +45,16 @@ export const checkNewsImpactStatus = (events: EconomicEvent[], bypassMins: numbe
     const bypassMs = bypassMins * 60 * 1000;
     const cooldownMs = cooldownMins * 60 * 1000;
 
+    // البحث عن حدث قريب (قبل أو بعد)
     const activeEvent = events.find(e => {
         const diff = e.timestamp - now;
-        // حالة 1: الخبر يقترب (فترة التوقف قبل) - يجب أن يكون الفرق إيجابياً وأقل من فترة الحظر
+        
+        // فترة الحظر قبل الخبر (Bypass)
         if (diff > 0 && diff <= bypassMs) return true;
-        // حالة 2: الخبر حدث للتو (فترة التبريد بعد) - يجب أن يكون الفرق سلبياً (حدث في الماضي) وضمن فترة التبريد
+        
+        // فترة التبريد بعد الخبر (Cooldown)
         if (diff < 0 && Math.abs(diff) <= cooldownMs) return true;
+        
         return false;
     });
 

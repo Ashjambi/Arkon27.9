@@ -4,14 +4,14 @@ import { TradingSignal, SignalDirection } from '../types';
 
 interface SignalCardProps {
   signal: TradingSignal;
-  // Updated signature to accept the override action string
   onSend: (sig: TradingSignal, overrideAction?: 'ENTRY' | 'FLIP' | 'HEDGE' | 'BOOST' | 'EXIT' | 'SECURE') => Promise<boolean> | void;
   sending: boolean;
   userRiskCap: number;
   isActive: boolean;
+  isSystemLocked?: boolean;
 }
 
-const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRiskCap, isActive }) => {
+const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRiskCap, isActive, isSystemLocked }) => {
   const [executed, setExecuted] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [timeAgo, setTimeAgo] = useState<string>('Now');
@@ -33,12 +33,8 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRi
   }, [signal.timestamp]);
 
   const handleExecute = async (e: React.MouseEvent) => {
-    e.stopPropagation(); // Critical: Stop card expansion toggle
-    
+    e.stopPropagation(); 
     if (sending || executed || isActive) return;
-    
-    // FIX: Explicitly pass 'ENTRY' to force execution even if score is low
-    // This bypasses the logic in App.tsx that filters automatic signals
     const success = await onSend(signal, 'ENTRY');
     if (success) setExecuted(true);
   };
@@ -47,7 +43,6 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRi
       setExpanded(!expanded);
   };
 
-  // Logic Tags
   const tags = [];
   if (Math.abs(signal.details.zScore) > 2) tags.push(`Z:${signal.details.zScore.toFixed(1)}`);
   if (signal.details.volumeMultiplier > 1.2) tags.push(`Vol:${signal.details.volumeMultiplier.toFixed(1)}x`);
@@ -59,6 +54,13 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRi
         className={`relative w-full rounded-xl bg-zinc-950 border ${executed ? 'border-zinc-800 opacity-70' : 'border-zinc-700 hover:border-zinc-500'} transition-all duration-200 overflow-hidden cursor-pointer group`}
         onClick={toggleExpand}
     >
+      {/* System Lock Badge */}
+      {isSystemLocked && !executed && !isActive && (
+        <div className="absolute top-2 left-2 z-10 bg-rose-500 text-black text-[7px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-1 shadow-lg shadow-rose-500/20">
+          <i className="fas fa-lock text-[6px]"></i> NEWS LOCK
+        </div>
+      )}
+
       {/* HEADER */}
       <div className={`px-4 py-3 bg-gradient-to-r ${bgGradient} to-transparent border-b border-zinc-800/50 flex justify-between items-center`}>
           <div className="flex items-center gap-3">
@@ -141,7 +143,9 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRi
                         w-full py-3 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all duration-200 flex items-center justify-center gap-2
                         ${isButtonDisabled 
                             ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700' 
-                            : 'bg-white text-black hover:bg-zinc-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-white/10'
+                            : isSystemLocked 
+                              ? 'bg-rose-500/20 text-rose-500 border border-rose-500/30 hover:bg-rose-500 hover:text-black' 
+                              : 'bg-white text-black hover:bg-zinc-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-white/10'
                         }
                     `}
                 >
@@ -154,6 +158,11 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, onSend, sending, userRi
                         <>
                             <i className="fas fa-check-circle text-emerald-500"></i>
                             <span>ACTIVE / EXECUTED</span>
+                        </>
+                    ) : isSystemLocked ? (
+                        <>
+                            <i className="fas fa-shield-alt"></i>
+                            <span>FORCE EXECUTE (BYPASS LOCK)</span>
                         </>
                     ) : (
                         <>

@@ -21,10 +21,11 @@ const MarketStats: React.FC<MarketStatsProps> = ({ state, title }) => {
   );
 
   const isUp = state.trendDirection === 'UP';
-  const isHunterReady = state.qualityScore >= 80;
+  const isHunterReady = state.qualityScore >= 80 && !state.isNewsPaused;
+  const newsPaused = state.isNewsPaused;
 
   return (
-    <div className="glass-card rounded-[3rem] overflow-hidden border border-zinc-800 flex flex-col h-full min-h-[520px] relative group transition-all hover:border-amber-500/20" dir="ltr">
+    <div className={`glass-card rounded-[3rem] overflow-hidden border flex flex-col h-full min-h-[520px] relative group transition-all duration-500 ${newsPaused ? 'border-rose-500/30 shadow-[0_0_50px_rgba(244,63,94,0.1)]' : 'border-zinc-800 hover:border-amber-500/20'}`} dir="ltr">
       
       {/* MTF ALIGNMENT BAR */}
       <div className="absolute top-0 left-0 right-0 h-1.5 flex p-[1px] bg-zinc-900">
@@ -37,7 +38,9 @@ const MarketStats: React.FC<MarketStatsProps> = ({ state, title }) => {
           <div className="flex justify-between items-start mb-6">
               <div>
                   <div className="flex items-center gap-3 mb-2">
-                      <span className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] bg-amber-500/5 border border-amber-500/10 px-3 py-1 rounded-md">Quantum Audit</span>
+                      <span className={`text-[10px] font-black uppercase tracking-[0.3em] border px-3 py-1 rounded-md ${newsPaused ? 'bg-rose-500/10 border-rose-500/20 text-rose-500' : 'bg-amber-500/5 border-amber-500/10 text-amber-500'}`}>
+                        {newsPaused ? 'News Lock Active' : 'Quantum Audit'}
+                      </span>
                   </div>
                   <h3 className="text-4xl font-black text-white tracking-tighter uppercase">{title}</h3>
               </div>
@@ -86,8 +89,12 @@ const MarketStats: React.FC<MarketStatsProps> = ({ state, title }) => {
           </div>
       </div>
 
-      <div className={`p-4 text-center font-black text-[10px] tracking-[0.4em] transition-all uppercase ${isHunterReady ? 'bg-amber-500 text-black shadow-[0_-10px_30px_rgba(245,158,11,0.2)]' : 'bg-zinc-900 text-zinc-700'}`}>
-          {isHunterReady ? 'TARGET ACQUIRED: INSTITUTIONAL FLOW DETECTED' : 'AUDITING NETWORK SECTORS...'}
+      <div className={`p-4 text-center font-black text-[10px] tracking-[0.4em] transition-all uppercase ${isHunterReady ? 'bg-amber-500 text-black shadow-[0_-10px_30px_rgba(245,158,11,0.2)]' : newsPaused ? 'bg-rose-500 text-white shadow-[0_-10px_30px_rgba(244,63,94,0.2)]' : 'bg-zinc-900 text-zinc-700'}`}>
+          {newsPaused 
+            ? `DANGER: HIGH IMPACT ${state.activeEvent?.currency} NEWS DETECTED` 
+            : isHunterReady 
+              ? 'TARGET ACQUIRED: INSTITUTIONAL FLOW DETECTED' 
+              : 'AUDITING NETWORK SECTORS...'}
       </div>
     </div>
   );
