@@ -2,9 +2,19 @@
 import { EconomicEvent } from '../types';
 
 /**
- * مرجع زمني ثابت يبدأ عند تشغيل التطبيق.
+ * استخدام مرجع زمني مستمر عبر تحديثات الصفحة لمنع "تصفير" العدادات.
  */
-const SESSION_START = Date.now();
+const getPersistentSessionStart = (): number => {
+    const key = 'arkon_news_session_v1';
+    const saved = localStorage.getItem(key);
+    if (saved) return parseInt(saved);
+    
+    const now = Date.now();
+    localStorage.setItem(key, now.toString());
+    return now;
+};
+
+const SESSION_START = getPersistentSessionStart();
 
 const getDynamicEvents = (): EconomicEvent[] => {
     return [
@@ -49,6 +59,8 @@ export const checkNewsImpactStatus = (
     cooldownMins: number
 ): NewsStatus => {
     const now = Date.now();
+    const bypassMs = bypassMins * 60000;
+    const cooldownMs = cooldownMins * 60000;
     
     // ترتيب الأحداث حسب الأقرب زمنياً
     const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
@@ -56,27 +68,27 @@ export const checkNewsImpactStatus = (
     for (const event of sortedEvents) {
         if (event.impact !== 'HIGH') continue;
         
-        const timeDiff = event.timestamp - now;
-        const minsDiff = timeDiff / 60000;
+        const timeToEvent = event.timestamp - now;
         
         // 1. فحص الحظر قبل الخبر (Bypass Window)
-        if (minsDiff > 0 && minsDiff <= bypassMins) {
+        if (timeToEvent > 0 && timeToEvent <= bypassMs) {
             return { 
                 isPaused: true, 
                 event, 
                 reason: 'PRE_EVENT', 
-                remainingMs: timeDiff 
+                remainingMs: timeToEvent 
             };
         }
         
         // 2. فحص فترة التبريد بعد الخبر (Cooldown Window)
-        if (minsDiff <= 0 && Math.abs(minsDiff) <= cooldownMins) {
-            const cooldownEnd = event.timestamp + (cooldownMins * 60000);
+        // إذا كان الوقت الحالي بعد الخبر ولكن ضمن فترة التبريد
+        if (timeToEvent <= 0 && Math.abs(timeToEvent) <= cooldownMs) {
+            const cooldownRemaining = cooldownMs - Math.abs(timeToEvent);
             return { 
                 isPaused: true, 
                 event, 
                 reason: 'POST_EVENT', 
-                remainingMs: cooldownEnd - now 
+                remainingMs: cooldownRemaining 
             };
         }
     }

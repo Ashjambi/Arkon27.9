@@ -63,13 +63,20 @@ const NewsRadar: React.FC<NewsRadarProps> = ({ events, isPaused, activeEvent, ne
             const isCurrentlyActive = activeEvent?.id === event.id;
             const isPast = event.timestamp < now;
             
-            // حساب الوقت المتبقي للعرض في القائمة
+            // حساب الوقت المتبقي للعرض
             let displayTime = event.timestamp - now;
-            let statusLabel = "T-MINUS";
+            let statusLabel = isPast ? "ELAPSED" : "T-MINUS";
 
-            if (isCurrentlyActive && isCooldown) {
-                displayTime = (newsStatus?.remainingMs || 0);
-                statusLabel = "UNLOCKING IN";
+            if (isCurrentlyActive) {
+                if (isCooldown) {
+                    // في حالة التبريد، نحسب الوقت المتبقي من نهاية فترة التبريد الفعلية
+                    // ملاحظة: نستخدم newsStatus.remainingMs المحدث من الـ Service
+                    displayTime = newsStatus?.remainingMs || 0;
+                    statusLabel = "UNLOCKING IN";
+                } else if (newsStatus?.reason === 'PRE_EVENT') {
+                    displayTime = newsStatus?.remainingMs || 0;
+                    statusLabel = "LOCKDOWN IN";
+                }
             }
 
             return (
