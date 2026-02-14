@@ -27,57 +27,45 @@ export const clearRemoteBridge = async (url: string): Promise<boolean> => {
 export const fetchBridgeState = async (url: string): Promise<{positions: any[], queue_depth: number} | null> => {
     if (!url) return null;
     try {
-        const response = await fetch(`${url}/state`, {
-            method: 'GET',
-            mode: 'cors'
-        });
-        if (response.ok) {
-            return await response.json();
-        }
+        const response = await fetch(`${url}/state`, { method: 'GET', mode: 'cors' });
+        if (response.ok) return await response.json();
         return null;
     } catch (e) { return null; }
 };
 
 export const sendToWebhook = async (
-  signal: TradingSignal,
+  signal: any,
   url: string,
   executedRisk: number,
   actionType: 'ENTRY' | 'FLIP' | 'HEDGE' | 'BOOST' | 'EXIT' | 'UPDATE_SL' | 'SECURE' = 'ENTRY',
   lotSize: number = 0,
-  secret: string = '' // إضافة مفتاح الأمان
+  secret: string = ''
 ): Promise<{success: boolean; error?: string}> => {
   if (!url) return { success: false, error: "URL missing" };
   
-  const closeOpposite = actionType === 'FLIP';
+  // تأمين الربح (SECURE): إغلاق جزئي وتحويل الستوب لنقطة الدخول
+  const isSecureAction = actionType === 'SECURE';
   
-  const secureAmount = (actionType === 'SECURE' && signal.details?.secureThreshold) 
-                       ? signal.details.secureThreshold 
-                       : 0;
-  
-  const partialPercent = (actionType === 'SECURE' && signal.details?.partialClosePercent)
-                       ? signal.details.partialClosePercent
-                       : 0;
-
   try {
     const response = await fetch(url, {
       method: 'POST',
       mode: 'cors',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: signal.id,
+        id: signal.id || signal.signalId,
         symbol: signal.asset, 
-        type: signal.direction === SignalDirection.LONG ? 'buy' : 'sell',
-        price: signal.entry,
-        sl: signal.stopLoss,
-        tp: signal.takeProfit,
+        type: (signal.direction === SignalDirection.LONG || signal.direction === 'LONG') ? 'buy' : 'sell',
+        price: signal.entry || signal.entryPrice,
+        sl: signal.stopLoss || signal.sl,
+        tp: signal.takeProfit || signal.tp,
         risk_pct: executedRisk,
         lot_size: lotSize,
         action_type: actionType, 
-        close_opposite: closeOpposite,
-        secure_amount: secureAmount,
-        partial_percent: partialPercent, 
+        close_opposite: actionType === 'FLIP',
+        secure_amount: isSecureAction ? 1.0 : 0, // تفعيل التأمين في الجسر
+        partial_percent: isSecureAction ? 50.0 : 0, // إغلاق 50%
         timestamp: Date.now(),
-        secret: secret // إرسال مفتاح الأمان للتحقق
+        secret: secret
       })
     });
     return { success: response.ok };

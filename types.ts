@@ -10,7 +10,7 @@ export enum SignalStrength {
   STANDARD = 'STANDARD'
 }
 
-export type LogType = 'QUANT' | 'RISK' | 'EXEC' | 'SYSTEM' | 'INFO' | 'ERROR' | 'WHALE' | 'NEWS' | 'COOLDOWN' | 'SECURE' | 'BOOST' | 'LATENCY' | 'KELLY' | 'VWAP' | 'HUNTER' | 'PROFIT_LOCK';
+export type LogType = 'QUANT' | 'RISK' | 'EXEC' | 'SYSTEM' | 'INFO' | 'ERROR' | 'WHALE' | 'NEWS' | 'COOLDOWN' | 'SECURE' | 'BOOST' | 'PROFIT_LOCK' | 'HEDGE' | 'FLIP';
 
 export interface LogEntry {
   id: string;
@@ -110,55 +110,54 @@ export interface TradingSignal {
 }
 
 export interface AppConfig {
+  // Telegram
   telegramBotToken: string;
   telegramChatId: string;
+  enableTelegramAlerts: boolean;
+
+  // Bridge & Connectivity
   webhookUrl: string;
   webhookSecret: string;
-  riskRewardRatio: number;
-  cooldownHours: number;
+  bridgeLatencyThreshold: number;
+
+  // Execution Engine
   autoExecution: boolean;
+  hunterMode: boolean; // 80%+ signals only
+  minSignalScore: number;
+  cooldownHours: number;
+  cooldownSameAssetMins: number;
+
+  // Risk Management
+  riskRewardRatio: number;
+  maxOpenTrades: number;
+  maxAllocationPerTradePercent: number; 
+  fixedLotSize: number; 
+  equityProtectionPercent: number; 
+  dailyLossLimitUSD: number;
+  maxDrawdownDailyPercent: number;
+
+  // Profit Protection & Trailing
+  secureThresholdUSD: number; 
+  breakevenOffsetPoints: number; 
+  partialClosePercent: number; 
   enableTrailing: boolean;
-  equityProtectionPercent: number;
-  maxAllocationPerTrade: number;
-  maxPyramidingLayers: number;
-  secureThreshold: number;
-  partialClosePercent: number;
-  autoHedgeEnabled: boolean;
+  trailingStartPoints: number;
   trailingStepPoints: number;
+
+  // Hedge & Flip Protocol
+  autoHedgeEnabled: boolean;
+  hedgeRatio: number; 
+  flipEnabled: boolean;
+  flipSensitivityScore: number; 
+
+  // News Shield
   newsBypassMinutes: number;
   newsCooldownMinutes: number;
-  secureHedgeTrades: boolean;
-  hunterMode: boolean;
-  globalProfitTargetUSD: number; 
-  perTradeProfitTargetUSD: number;
-  maxOpenTrades: number; // السيف لعدد الصفقات
-  disableInitialSL: boolean; // تعطيل الستوب لوز الابتدائي
-}
-
-export interface DeribitBookSummary {
-    instrument_name: string;
-    last: number;
-    funding_8h?: number;
-    open_interest?: number;
-    volume?: number;
-    _data_age_ms?: number;
-}
-
-export interface DeribitCandleData {
-    status: string;
-    close: number[];
-    open: number[];
-    high: number[];
-    low: number[];
-    volume: number[];
-    ticks: number[];
-}
-
-export interface DeribitOrderBook {
-    bids: [number, number][];
-    asks: [number, number][];
-    instrument_name: string;
-    timestamp: number;
+  blockOnMediumImpact: boolean;
+  
+  // Advanced
+  disableInitialSL: boolean;
+  useVirtualSL: boolean;
 }
 
 export interface HistoricalTrade {
@@ -170,4 +169,29 @@ export interface HistoricalTrade {
     timestamp: number;
     pnlPoints: number;
     outcome: 'WIN' | 'LOSS' | 'BE';
+}
+
+// Added Deribit related interfaces to fix reported module import errors
+export interface DeribitBookSummary {
+  instrument_name: string;
+  last: number;
+  funding_8h: number;
+  open_interest: number;
+  volume: number;
+  _data_age_ms?: number;
+}
+
+export interface DeribitCandleData {
+  status: string;
+  close: number[];
+  open?: number[];
+  high?: number[];
+  low?: number[];
+  volume?: number[];
+  ticks?: number[];
+}
+
+export interface DeribitOrderBook {
+  bids: [number, number][];
+  asks: [number, number][];
 }
