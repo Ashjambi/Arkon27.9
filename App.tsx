@@ -13,7 +13,7 @@ import SignalCard from './components/SignalCard';
 import NewsRadar from './components/NewsRadar';
 import HistoryTable from './components/HistoryTable';
 
-const CURRENT_VERSION = '45.2.0-ELITE'; 
+const CURRENT_VERSION = '45.4.0-ZERO-SL-FORCED'; 
 
 const DEFAULT_CONFIG: AppConfig = {
   telegramBotToken: '',
@@ -47,7 +47,7 @@ const DEFAULT_CONFIG: AppConfig = {
   newsBypassMinutes: 45,
   newsCooldownMinutes: 90,
   blockOnMediumImpact: false,
-  disableInitialSL: false,
+  disableInitialSL: true, // تفعيل إجباري لضمان تنفيذ طلب المستخدم
   useVirtualSL: false
 };
 
@@ -59,7 +59,7 @@ const App: React.FC = () => {
 
   const [managedTrades, setManagedTrades] = useState<any[]>([]); 
   const [logs, setLogs] = useState<LogEntry[]>([
-      { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: 'ARKON Elite Quant v45.2. Initializing Strategic Command...' }
+      { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [ZERO-SL PROTOCOL] ACTIVE.` }
   ]);
   const [btcAnalysis, setBtcAnalysis] = useState<MarketAnalysisState | null>(null);
   const [ethAnalysis, setEthAnalysis] = useState<MarketAnalysisState | null>(null);
@@ -82,7 +82,7 @@ const App: React.FC = () => {
     localStorage.setItem(`arkon_config_v${CURRENT_VERSION}`, JSON.stringify(config));
   }, [config]);
 
-  const handleSendSignal = useCallback(async (signal: any, actionType: any = 'ENTRY'): Promise<boolean> => {
+  const handleSendSignal = useCallback(async (originalSignal: any, actionType: any = 'ENTRY'): Promise<boolean> => {
     if (!bridgeStatus && actionType !== 'TELEGRAM') {
       addLog(`فشل: الجسر غير متصل`, 'ERROR');
       return false;
@@ -93,18 +93,28 @@ const App: React.FC = () => {
         return false;
     }
 
-    const reqId = (signal.id || signal.signalId || Math.random()) + actionType;
+    const reqId = (originalSignal.id || originalSignal.signalId || Math.random()) + actionType;
     if (sendingRef.current[reqId]) return false;
     sendingRef.current[reqId] = true;
 
+    // استنساخ عميق للإشارة لضمان عدم تعديل الأصل في الذاكرة
+    const signalToSend = { ...originalSignal };
+    
+    // فرض تصفير الوقف إذا كان الهيدج أو خيار تعطيل الستوب مفعلاً
+    if (actionType === 'ENTRY' && (config.autoHedgeEnabled || config.disableInitialSL)) {
+        signalToSend.stopLoss = 0;
+        signalToSend.sl = 0; // تصفير كلا الحقلين لضمان عدم الالتباس
+        addLog(`🛡️ نظام الهيدج نِشط: تم مسح الستوب لوز من أمر التنفيذ`, 'HEDGE');
+    }
+
     try {
-        const result = await sendToWebhook(signal, config.webhookUrl, config.maxAllocationPerTradePercent, actionType, config.fixedLotSize, config.webhookSecret);
+        const result = await sendToWebhook(signalToSend, config.webhookUrl, config.maxAllocationPerTradePercent, actionType, config.fixedLotSize, config.webhookSecret);
         if (result.success) {
-            addLog(`🚀 تم تنفيذ: ${actionType} لـ ${signal.asset || 'System'}`, 'EXEC');
+            addLog(`🚀 تم تنفيذ: ${actionType} لـ ${signalToSend.asset || 'System'}`, 'EXEC');
             if (config.enableTelegramAlerts && config.telegramBotToken) {
-                sendSignalToTelegram(signal, config.telegramChatId, config.telegramBotToken, actionType, "", config.webhookUrl).catch(() => {});
+                sendSignalToTelegram(signalToSend, config.telegramChatId, config.telegramBotToken, actionType, "", config.webhookUrl).catch(() => {});
             }
-            if (actionType === 'ENTRY') sentSignalsRef.current.add(signal.id);
+            if (actionType === 'ENTRY') sentSignalsRef.current.add(signalToSend.id);
             return true;
         }
     } catch (err) { addLog(`خطأ في الوصول للجسر`, 'ERROR'); } 
@@ -344,6 +354,13 @@ const App: React.FC = () => {
                                     <div className="space-y-4">
                                         <label className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">حساسية الانعكاس (Flip Sensitivity)</label>
                                         <input type="number" value={config.flipSensitivityScore} onChange={(e)=>setConfig({...config, flipSensitivityScore: parseInt(e.target.value)})} className="w-full bg-zinc-900/60 border border-zinc-800 rounded-3xl px-8 py-6 text-white font-mono text-3xl focus:border-purple-500/50 outline-none transition-all" />
+                                    </div>
+                                    <div className="p-8 bg-zinc-900/40 rounded-[2.5rem] border border-zinc-800 flex justify-between items-center group hover:border-amber-500/30 transition-all col-span-2">
+                                        <div>
+                                            <label className="text-xs font-black text-white block mb-1">تعطيل الوقف الأولي (Disable Initial SL)</label>
+                                            <p className="text-[10px] text-zinc-500">موصى به عند استخدام الهيدج لفتح الصفقات بدون ستوب لوز</p>
+                                        </div>
+                                        <input type="checkbox" checked={config.disableInitialSL} onChange={(e)=>setConfig({...config, disableInitialSL: e.target.checked})} className="w-8 h-8 accent-amber-500 cursor-pointer" />
                                     </div>
                                 </div>
                             </div>
