@@ -21,7 +21,6 @@ uint lastSync = 0;
 int OnInit() {
    trade.SetExpertMagicNumber((ulong)MagicNum);
    trade.SetDeviationInPoints(100); 
-   trade.SetTypeFilling(ORDER_FILLING_IOC); 
    trade.SetAsyncMode(false);
    
    EventSetTimer(1); 
@@ -76,7 +75,7 @@ void ReportOpenPositions() {
             
             // Build JSON Object
             string obj = StringFormat(
-               "{\\"ticket\\":%d,\\"asset\\":\\"%s\\",\\"direction\\":\\"%s\\",\\"entryPrice\\":%.2f,\\"currentPrice\\":%.2f,\\"volume\\":%.2f,\\"pnl\\":%.2f,\\"sl\\":%.2f,\\"tp\\":%.2f,\\"signalId\\":\\"%s\\"}",
+               "{\\"ticket\\":%d,\\"asset\\":\\"%s\\",\\"direction\\":\\"%s\\",\\"entryPrice\\":%f,\\"currentPrice\\":%f,\\"volume\\":%f,\\"pnl\\":%f,\\"sl\\":%f,\\"tp\\":%f,\\"signalId\\":\\"%s\\"}",
                ticket, sym, dir, openPrice, currentPrice, vol, profit, sl, tp, signalId
             );
             
@@ -130,6 +129,8 @@ void ProcessEntry(string json, string symbol, string id) {
    // Prevent re-opening same ID if already open
    if (IsTradeExists(symbol, id)) return;
 
+   SymbolSelect(symbol, true); // Ensure symbol is selected in Market Watch
+
    string type = ExtractJson(json, "type");
    string action = ExtractJson(json, "action_type");
    double tp = StringToDouble(ExtractJson(json, "tp"));
@@ -139,11 +140,24 @@ void ProcessEntry(string json, string symbol, string id) {
    ENUM_ORDER_TYPE ordType = (type == "buy") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    double price = (type == "buy") ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
    
-   if (price <= 0) return;
+   if (price <= 0) {
+       Print("❌ Price is 0 for ", symbol, ". Check Market Watch.");
+       return;
+   }
+   
    double finalLots = (lots > 0) ? lots : DefaultLots;
    finalLots = NormalizeLot(symbol, finalLots);
 
-   Print("ARKON: Launching ", action, " on ", symbol);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   if (sl > 0) sl = NormalizeDouble(sl, digits);
+   if (tp > 0) tp = NormalizeDouble(tp, digits);
+
+   int filling = (int)SymbolInfoInteger(symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0) trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((filling & SYMBOL_FILLING_IOC) != 0) trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else trade.SetTypeFilling(ORDER_FILLING_RETURN);
+
+   Print("ARKON: Launching ", action, " on ", symbol, " | Lots: ", finalLots, " | Price: ", price, " | SL: ", sl, " | TP: ", tp);
 
    if(trade.PositionOpen(symbol, ordType, finalLots, price, sl, tp, "ARKON:"+id)) {
       Print("✅ ORDER OK");
@@ -186,8 +200,8 @@ bool IsTradeExists(string symbol, string id) {
          if(PositionSelectByTicket(ticket)) {
             if(PositionGetInteger(POSITION_MAGIC) == MagicNum) {
                string comment = PositionGetString(POSITION_COMMENT);
-               // Check if comment contains ID (handling "ARKON:" prefix)
-               if(StringFind(comment, id) >= 0) return true;
+               string expectedComment = "ARKON:" + id;
+               if(StringFind(comment, expectedComment) == 0) return true;
             }
          }
       }
@@ -226,11 +240,16 @@ double NormalizeLot(string sym, double lot) {
 }
 
 string ExtractJson(string json, string key) {
-   string search = "\\\"" + key + "\\\"";
+   string search = "\\\"" + key + "\\\":";
    int start = StringFind(json, search);
-   if(start == -1) return "";
+   if(start == -1) {
+      // Try with space after colon just in case
+      search = "\\\"" + key + "\\\" :";
+      start = StringFind(json, search);
+      if(start == -1) return "";
+   }
    start += StringLen(search);
-   while(start < StringLen(json) && (StringSubstr(json, start, 1) == ":" || StringSubstr(json, start, 1) == " ")) start++;
+   while(start < StringLen(json) && StringSubstr(json, start, 1) == " ") start++;
    if(StringSubstr(json, start, 1) == "\\\"") {
       start++; int end = StringFind(json, "\\\"", start);
       if(end == -1) return "";

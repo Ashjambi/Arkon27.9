@@ -5,26 +5,27 @@ import { generateSignal } from './services/tradingAlgo';
 import { sendToWebhook, checkBridgeStatus, fetchBridgeState, clearRemoteBridge } from './services/webhookService';
 import { sendTestMessage, sendSignalToTelegram } from './services/telegramService';
 import { getIncomingHighImpactEvents, checkNewsImpactStatus, NewsStatus } from './services/newsService';
-import { TradingSignal, AppConfig, LogEntry, LogType, MarketAnalysisState, EconomicEvent, SignalDirection } from './types';
+import { TradingSignal, AppConfig, LogEntry, LogType, MarketAnalysisState, EconomicEvent, SignalDirection, SignalStrength } from './types';
 import { MQL5_CODE } from './utils/mqlCode';
+import { BRIDGE_CODE } from './utils/bridgeCode';
 import MarketStats from './components/MarketStats';
 import TradeLog from './components/TradeLog';
 import SignalCard from './components/SignalCard';
 import NewsRadar from './components/NewsRadar';
 import HistoryTable from './components/HistoryTable';
 
-const CURRENT_VERSION = '45.4.0-ZERO-SL-FORCED'; 
+const CURRENT_VERSION = '45.6.0-TURBO-EXEC'; 
 
 const DEFAULT_CONFIG: AppConfig = {
   telegramBotToken: '',
   telegramChatId: '',
   enableTelegramAlerts: true,
-  webhookUrl: 'http://127.0.0.1:3000',
+  webhookUrl: 'http://localhost:3000',
   webhookSecret: 'ARKON_SECURE_2025',
   bridgeLatencyThreshold: 500,
   autoExecution: true,
   hunterMode: true,
-  minSignalScore: 78,
+  minSignalScore: 74, // تم الخفض من 78 لتسريع الدخول
   cooldownHours: 1,
   cooldownSameAssetMins: 30,
   riskRewardRatio: 2.5,
@@ -47,7 +48,7 @@ const DEFAULT_CONFIG: AppConfig = {
   newsBypassMinutes: 45,
   newsCooldownMinutes: 90,
   blockOnMediumImpact: false,
-  disableInitialSL: true, // تفعيل إجباري لضمان تنفيذ طلب المستخدم
+  disableInitialSL: true, 
   useVirtualSL: false
 };
 
@@ -59,7 +60,7 @@ const App: React.FC = () => {
 
   const [managedTrades, setManagedTrades] = useState<any[]>([]); 
   const [logs, setLogs] = useState<LogEntry[]>([
-      { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [ZERO-SL PROTOCOL] ACTIVE.` }
+      { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [TURBO MODE] ACTIVE.` }
   ]);
   const [btcAnalysis, setBtcAnalysis] = useState<MarketAnalysisState | null>(null);
   const [ethAnalysis, setEthAnalysis] = useState<MarketAnalysisState | null>(null);
@@ -88,9 +89,39 @@ const App: React.FC = () => {
       return false;
     }
     
-    if (actionType === 'ENTRY' && managedTrades.length >= config.maxOpenTrades) {
+    // Auto-map action based on live state if not overridden
+    if (actionType === 'ENTRY') {
+        const assetPure = originalSignal.asset.split('-')[0];
+        const assetTrades = managedTrades.filter(t => t.asset.includes(assetPure));
+        const hasOppositeTrade = assetTrades.some(t => t.direction !== originalSignal.direction);
+        
+        if (hasOppositeTrade) {
+            actionType = config.autoHedgeEnabled ? 'HEDGE' : (config.flipEnabled ? 'FLIP' : 'ENTRY');
+            if (actionType !== 'ENTRY') {
+                addLog(`🔄 mapping strategy: ${actionType} triggered by opposite exposure`, 'QUANT');
+            }
+        } else if (assetTrades.length > 0) {
+            if (assetTrades.length < config.maxOpenTrades) {
+                actionType = 'BOOST';
+            } else {
+                addLog(`⛔ Layer Block: Max capacity for ${assetPure}`, 'RISK');
+                return false;
+            }
+        }
+    }
+
+    if (['ENTRY', 'BOOST', 'HEDGE'].includes(actionType) && managedTrades.length >= config.maxOpenTrades) {
         addLog(`تم بلوغ الحد الأقصى للصفقات المسموح به (${config.maxOpenTrades})`, 'RISK');
         return false;
+    }
+
+    // Risk Management: Equity Protection
+    if (['ENTRY', 'BOOST', 'HEDGE'].includes(actionType)) {
+        const currentTotalLots = managedTrades.length * config.fixedLotSize;
+        if (currentTotalLots + config.fixedLotSize > config.equityProtectionPercent) {
+            addLog(`⛔ Risk Block: Equity Protection Limit Reached`, 'RISK');
+            return false;
+        }
     }
 
     const reqId = (originalSignal.id || originalSignal.signalId || Math.random()) + actionType;
@@ -101,7 +132,7 @@ const App: React.FC = () => {
     const signalToSend = { ...originalSignal };
     
     // فرض تصفير الوقف إذا كان الهيدج أو خيار تعطيل الستوب مفعلاً
-    if (actionType === 'ENTRY' && (config.autoHedgeEnabled || config.disableInitialSL)) {
+    if (['ENTRY', 'BOOST', 'HEDGE', 'FLIP'].includes(actionType) && (config.autoHedgeEnabled || config.disableInitialSL)) {
         signalToSend.stopLoss = 0;
         signalToSend.sl = 0; // تصفير كلا الحقلين لضمان عدم الالتباس
         addLog(`🛡️ نظام الهيدج نِشط: تم مسح الستوب لوز من أمر التنفيذ`, 'HEDGE');
@@ -114,7 +145,7 @@ const App: React.FC = () => {
             if (config.enableTelegramAlerts && config.telegramBotToken) {
                 sendSignalToTelegram(signalToSend, config.telegramChatId, config.telegramBotToken, actionType, "", config.webhookUrl).catch(() => {});
             }
-            if (actionType === 'ENTRY') sentSignalsRef.current.add(signalToSend.id);
+            sentSignalsRef.current.add(signalToSend.id);
             return true;
         }
     } catch (err) { addLog(`خطأ في الوصول للجسر`, 'ERROR'); } 
@@ -141,6 +172,26 @@ const App: React.FC = () => {
             const summaries = await fetchMarketSummary(asset);
             const perp = summaries.find(s => s.instrument_name.includes('PERPETUAL'));
             if (perp) {
+                const assetName = perp.instrument_name;
+                
+                // Check SECURE logic against real managed trades from bridge
+                managedTrades.forEach(trade => {
+                   const tradeAsset = trade.asset.includes(asset) ? assetName : null;
+                   
+                   if (tradeAsset && trade.pnl && trade.pnl >= config.secureThresholdUSD) {
+                       const secureId = `SECURE-${trade.ticket}-${Math.floor(Date.now() / 60000)}`; 
+                       if(!sentSignalsRef.current.has(secureId)) {
+                           const tempSignal: TradingSignal = {
+                               id: secureId, asset: tradeAsset, direction: trade.direction, entry: trade.entryPrice, 
+                               tp1: 0, tp2: 0, takeProfit: trade.tp, stopLoss: trade.sl, 
+                               strength: SignalStrength.STANDARD, qualityScore: 100, reasoning: "SECURE_AUTO", gates: [], details: {} as any, timestamp: Date.now()
+                           };
+                           handleSendSignal(tempSignal, 'SECURE');
+                           addLog(`🛡️ تأمين: ${tradeAsset} (PnL: $${trade.pnl.toFixed(2)})`, 'SECURE');
+                       }
+                   }
+                });
+
                 const [dvol, optVol, candles, orderBook, dailyCandles] = await Promise.all([
                   fetchDVOL(asset), fetchOptionsVolume(asset), fetchCandles(perp.instrument_name, '15'), 
                   fetchOrderBook(perp.instrument_name), fetchHistoricalContext(perp.instrument_name)
@@ -198,7 +249,8 @@ const App: React.FC = () => {
                         {id: 'NEWS', label: 'فلتر الأخبار', icon: 'newspaper'},
                         {id: 'RELAY', label: 'التليجرام', icon: 'paper-plane'},
                         {id: 'SYSTEM', label: 'الجسر والأمان', icon: 'link'},
-                        {id: 'MQL5', label: 'كود MT5', icon: 'code'}
+                        {id: 'MQL5', label: 'كود MT5', icon: 'code'},
+                        {id: 'BRIDGE', label: 'كود الجسر (Node)', icon: 'server'}
                     ].map(tab => (
                         <button 
                             key={tab.id} 
@@ -469,6 +521,33 @@ const App: React.FC = () => {
                                                 addLog("📋 تم نسخ الكود المحدث للحافظة", "SYSTEM");
                                             }}
                                             className="absolute top-8 right-8 px-8 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase hover:bg-amber-500 transition-all shadow-2xl active:scale-90"
+                                        >
+                                            <i className="fas fa-copy mr-2"></i> نسخ الكود بالكامل
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 10. BRIDGE CODE */}
+                        {settingsTab === 'BRIDGE' && (
+                            <div className="space-y-12">
+                                <h2 className="text-5xl font-black text-white italic tracking-tighter">كود الجسر (Node.js)</h2>
+                                <div className="space-y-6">
+                                    <div className="p-8 bg-blue-500/10 border border-blue-500/20 rounded-3xl flex items-center gap-6">
+                                        <i className="fas fa-info-circle text-blue-500 text-2xl"></i>
+                                        <p className="text-xs text-blue-200/80 leading-relaxed font-bold">هذا هو كود الجسر المحدث الذي يحل مشكلة الاتصال مع المتصفحات (CORS/Private Network). احفظه كـ arkon-bridge.js وشغله عبر Node.js.</p>
+                                    </div>
+                                    <div className="relative group">
+                                        <pre className="bg-black/60 p-10 rounded-3xl border border-zinc-800 font-mono text-[11px] text-zinc-400 overflow-x-auto max-h-[450px] custom-scrollbar text-left group-hover:border-zinc-700 transition-all" dir="ltr">
+                                            {BRIDGE_CODE}
+                                        </pre>
+                                        <button 
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(BRIDGE_CODE);
+                                                addLog("📋 تم نسخ كود الجسر للحافظة", "SYSTEM");
+                                            }}
+                                            className="absolute top-8 right-8 px-8 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase hover:bg-blue-500 transition-all shadow-2xl active:scale-90"
                                         >
                                             <i className="fas fa-copy mr-2"></i> نسخ الكود بالكامل
                                         </button>

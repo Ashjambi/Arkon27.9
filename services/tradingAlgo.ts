@@ -40,6 +40,32 @@ const calculateHurst = (closes: number[]): number => {
     return Math.log(r / s) / Math.log(n);
 };
 
+const calculateRSI = (closes: number[], period: number = 14): number => {
+    if (closes.length < period + 1) return 50;
+    let avgGain = 0;
+    let avgLoss = 0;
+    
+    for (let i = 1; i <= period; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff > 0) avgGain += diff;
+        else avgLoss -= diff;
+    }
+    avgGain /= period;
+    avgLoss /= period;
+    
+    for (let i = period + 1; i < closes.length; i++) {
+        const diff = closes[i] - closes[i - 1];
+        const gain = diff > 0 ? diff : 0;
+        const loss = diff < 0 ? -diff : 0;
+        avgGain = ((avgGain * (period - 1)) + gain) / period;
+        avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+    }
+    
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+};
+
 // حساب توازن دفتر الأوامر (Order Book Imbalance)
 const calculateImbalance = (orderBook: DeribitOrderBook | null): number => {
     if (!orderBook) return 0;
@@ -71,10 +97,13 @@ export const generateSignal = (
   const hurst = calculateHurst(m15Closes);
   const zScore = calculateZScore(price, m15Closes);
   const imbalance = calculateImbalance(orderBook);
+  const rsi = calculateRSI(m15Closes);
   
+  // تعديل الحساسية: تم خفض الشروط لتسريع التقاط الإشارة
   let regime: 'MEAN_REVERSION' | 'MOMENTUM_TREND' | 'CHOPPY/NOISE' = 'CHOPPY/NOISE';
   if (hurst > 0.55) regime = 'MOMENTUM_TREND';
-  else if (Math.abs(zScore) > 1.8 && hurst < 0.48) regime = 'MEAN_REVERSION';
+  // تم خفض شرط Z-Score من 1.8 إلى 1.5 لالتقاط الانعكاس مبكراً
+  else if (Math.abs(zScore) > 1.5 && hurst < 0.50) regime = 'MEAN_REVERSION';
 
   // --- مصفوفة تدقيق المؤسسات (The Institutional Big 5) ---
   const gates: LogicGate[] = [
@@ -90,8 +119,8 @@ export const generateSignal = (
         id: 'fractal_eff', 
         name: 'Fractal Efficiency', 
         value: hurst.toFixed(3), 
-        threshold: 'Hurst > 0.52', 
-        status: hurst > 0.52 ? 'PASS' : 'FAIL', 
+        threshold: regime === 'MOMENTUM_TREND' ? 'Hurst > 0.52' : 'Hurst < 0.50', 
+        status: (regime === 'MOMENTUM_TREND' && hurst > 0.52) || (regime === 'MEAN_REVERSION' && hurst < 0.50) ? 'PASS' : 'FAIL', 
         requiredFor: 'ENTRY' 
     },
     { 
@@ -106,8 +135,17 @@ export const generateSignal = (
         id: 'quant_dev', 
         name: 'Quant Deviation', 
         value: zScore.toFixed(2), 
-        threshold: '|Z| > 1.2', 
-        status: Math.abs(zScore) > 1.2 ? 'PASS' : 'FAIL', 
+        // تم خفض العتبة من 1.2 إلى 1.0 لقبول انحرافات أقل حدة ولكن أسرع
+        threshold: '|Z| > 1.0', 
+        status: Math.abs(zScore) > 1.0 ? 'PASS' : 'FAIL', 
+        requiredFor: 'ENTRY' 
+    },
+    { 
+        id: 'momentum_exhaustion', 
+        name: 'Momentum Exhaustion', 
+        value: rsi.toFixed(1), 
+        threshold: 'RSI 35-65', 
+        status: (rsi > 35 && rsi < 65) || regime === 'MEAN_REVERSION' ? 'PASS' : 'FAIL', 
         requiredFor: 'ENTRY' 
     },
     { 
@@ -126,9 +164,25 @@ export const generateSignal = (
   if (criticalGatesPassed) {
       if (regime === 'MOMENTUM_TREND') {
           direction = (dailyTrend === 'UP') ? SignalDirection.LONG : SignalDirection.SHORT;
+          
+          // حماية من البيع في القاع أو الشراء في القمة
+          if (direction === SignalDirection.SHORT && (rsi < 35 || zScore < -2.0 || imbalance > 0.3)) {
+              direction = null; // إلغاء البيع بسبب ضعف الزخم أو دخول سيولة شرائية
+          } else if (direction === SignalDirection.LONG && (rsi > 65 || zScore > 2.0 || imbalance < -0.3)) {
+              direction = null; // إلغاء الشراء بسبب ضعف الزخم أو دخول سيولة بيعية
+          }
+
+          // اكتشاف الحيتان والسيولة العالية (Whale/Liquidity Detection)
+          // إذا كان هناك اختلال كبير في دفتر الأوامر وزخم قوي، نتبع الحيتان
+          if (imbalance > 0.5 && rsi > 55) {
+              direction = SignalDirection.LONG; 
+          } else if (imbalance < -0.5 && rsi < 45) {
+              direction = SignalDirection.SHORT; 
+          }
       } else if (regime === 'MEAN_REVERSION') {
-          if (zScore < -1.8) direction = SignalDirection.LONG;
-          else if (zScore > 1.8) direction = SignalDirection.SHORT;
+          // تم خفض شرط التوجيه ليتوافق مع النظام الجديد
+          if (zScore < -1.5) direction = SignalDirection.LONG;
+          else if (zScore > 1.5) direction = SignalDirection.SHORT;
       }
   }
 
@@ -137,7 +191,7 @@ export const generateSignal = (
   const qualityScore = (passedCount / gates.length) * 100;
 
   const analysis: MarketAnalysisState = {
-      asset: summary.instrument_name, price, zScore, vwapDeviation: 0, rSquared: 0, dvol, hurst, rsi: 50, volRatio: 1,
+      asset: summary.instrument_name, price, zScore, vwapDeviation: 0, rSquared: 0, dvol, hurst, rsi, volRatio: 1,
       yearlyHigh: Math.max(...dailyHistory, price), yearlyLow: Math.min(...dailyHistory, price), pricePositionRank: 50, regime, 
       qualityScore, gates, 
       primaryBlocker: direction ? "ALPHA LOCKED 🎯" : "AUDITING SECTORS 📡", 

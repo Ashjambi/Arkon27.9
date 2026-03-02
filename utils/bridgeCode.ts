@@ -1,5 +1,4 @@
-
-/**
+export const BRIDGE_CODE = `/**
  * ARKON QUANT BRIDGE v4.1 - TELEGRAM RELAY
  * ---------------------------------------------
  * Features:
@@ -36,7 +35,7 @@ const relayToTelegram = (botToken, chatId, text, res) => {
     const options = {
         hostname: 'api.telegram.org',
         port: 443,
-        path: `/bot${botToken}/sendMessage`,
+        path: '/bot' + botToken + '/sendMessage',
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -53,7 +52,7 @@ const relayToTelegram = (botToken, chatId, text, res) => {
                 res.writeHead(200, {'Content-Type': 'application/json'});
                 res.end(JSON.stringify({ status: 'sent', provider: 'bridge_direct' }));
             } else {
-                console.error(`[TELEGRAM] ❌ Error: ${data}`);
+                console.error('[TELEGRAM] ❌ Error: ' + data);
                 res.writeHead(400, {'Content-Type': 'application/json'});
                 res.end(JSON.stringify({ status: 'error', details: data }));
             }
@@ -61,7 +60,7 @@ const relayToTelegram = (botToken, chatId, text, res) => {
     });
 
     tgReq.on('error', (e) => {
-        console.error(`[TELEGRAM] ❌ Network Error: ${e.message}`);
+        console.error('[TELEGRAM] ❌ Network Error: ' + e.message);
         res.writeHead(500);
         res.end(JSON.stringify({ status: 'error', details: e.message }));
     });
@@ -101,7 +100,7 @@ const server = http.createServer((req, res) => {
                     signalQueue = [];
                     activePositions = [];
                     processedIds.clear();
-                    console.log(`[BRIDGE] 🧹 SYSTEM RESET.`);
+                    console.log('[BRIDGE] 🧹 SYSTEM RESET.');
                     res.writeHead(200, {'Content-Type': 'application/json'});
                     res.end(JSON.stringify({ status: 'cleared' }));
                     return;
@@ -134,7 +133,7 @@ const server = http.createServer((req, res) => {
                 signalQueue.push({ ...data, queuedAt: Date.now() });
                 if (data.id) processedIds.add(data.id); 
                 
-                console.log(`[SIGNAL] ➡️ QUEUED: ${data.symbol} | ${data.action_type}`);
+                console.log('[SIGNAL] ➡️ QUEUED: ' + data.symbol + ' | ' + data.action_type);
                 res.writeHead(200, {'Content-Type': 'application/json'});
                 res.end(JSON.stringify({ status: 'queued', queueLength: signalQueue.length }));
 
@@ -149,7 +148,7 @@ const server = http.createServer((req, res) => {
 
         if (req.url.includes('/signal')) {
             const nextSignal = signalQueue.shift(); 
-            if (nextSignal) console.log(`[BRIDGE] 📤 SENT TO MT5: ${nextSignal.symbol}`);
+            if (nextSignal) console.log('[BRIDGE] 📤 SENT TO MT5: ' + nextSignal.symbol);
             res.end(JSON.stringify(nextSignal || {})); 
             return;
         }
@@ -175,5 +174,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(3000, '0.0.0.0', () => {
-    console.log(`\nARKON BRIDGE v4.1 (TELEGRAM RELAY) RUNNING ON http://127.0.0.1:3000 🚀\n`);
+    console.log('\\nARKON BRIDGE v4.1 (TELEGRAM RELAY) RUNNING ON http://127.0.0.1:3000 🚀\\n');
 });
+`;
