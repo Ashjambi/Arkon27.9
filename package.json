@@ -4,18 +4,20 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "NODE_ENV=development tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.39.0",
+    "express": "^5.2.1",
     "mathjs": "^15.1.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "recharts": "^3.7.0",
     "simple-statistics": "^7.8.8",
+    "tsx": "^4.21.0",
     "yahoo-finance2": "^3.13.2"
   },
   "devDependencies": {

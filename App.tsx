@@ -22,7 +22,7 @@ const DEFAULT_CONFIG: AppConfig = {
   telegramBotToken: '',
   telegramChatId: '',
   enableTelegramAlerts: true,
-  webhookUrl: 'http://127.0.0.1:3000',
+  webhookUrl: '/api/bridge',
   webhookSecret: 'ARKON_SECURE_2025',
   bridgeLatencyThreshold: 500,
   autoExecution: true,
