@@ -10,11 +10,13 @@
  * Usage: node arkon-bridge.js
  */
 
-const http = require('http');
-const https = require('https'); // Required for Telegram API
+import http from 'http';
+import https from 'https'; // Required for Telegram API
 
 let signalQueue = [];      // FIFO Queue (Frontend -> MT5)
 let activePositions = [];  // STATE OF TRUTH (MT5 -> Frontend)
+let tradeHistory = [];     // History of closed trades
+let accountBalance = 0;    // Account balance from MT5
 let processedIds = new Set(); 
 let lastHeartbeat = Date.now();
 
@@ -73,8 +75,7 @@ const relayToTelegram = (botToken, chatId, text, res) => {
 const server = http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Access-Control-Request-Private-Network');
-    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
@@ -109,7 +110,29 @@ const server = http.createServer((req, res) => {
 
                 // C. STATE SYNC (FROM MT5)
                 if (data.type === 'SYNC_STATE') {
-                    activePositions = data.positions || [];
+                    const newPositions = data.positions || [];
+                    if (data.balance !== undefined) accountBalance = data.balance;
+                    
+                    // Detect closed positions
+                    const newTickets = new Set(newPositions.map(p => p.ticket));
+                    activePositions.forEach(p => {
+                        if (!newTickets.has(p.ticket)) {
+                            tradeHistory.unshift({
+                                id: p.ticket.toString(),
+                                asset: p.asset,
+                                direction: p.direction,
+                                entryPrice: p.entryPrice,
+                                exitPrice: p.currentPrice,
+                                timestamp: Date.now(),
+                                pnlPoints: p.pnl,
+                                outcome: p.pnl > 0 ? 'WIN' : (p.pnl < 0 ? 'LOSS' : 'BE')
+                            });
+                        }
+                    });
+                    
+                    if (tradeHistory.length > 200) tradeHistory = tradeHistory.slice(0, 200);
+                    
+                    activePositions = newPositions;
                     lastHeartbeat = Date.now();
                     res.writeHead(200, {'Content-Type': 'application/json'});
                     res.end(JSON.stringify({ status: 'synced' }));
@@ -128,6 +151,14 @@ const server = http.createServer((req, res) => {
                 if (data.id && processedIds.has(data.id)) {
                     res.writeHead(200, {'Content-Type': 'application/json'});
                     res.end(JSON.stringify({ status: 'ignored_duplicate' }));
+                    return;
+                }
+
+                // SECURE: Validate secret
+                if (data.secret !== 'ARKON_SECURE_2025') {
+                    console.error(`[SECURITY] ❌ Unauthorized attempt with secret: ${data.secret}`);
+                    res.writeHead(403);
+                    res.end(JSON.stringify({ error: 'Unauthorized' }));
                     return;
                 }
 
@@ -157,6 +188,8 @@ const server = http.createServer((req, res) => {
         if (req.url.includes('/state')) {
             res.end(JSON.stringify({
                 positions: activePositions,
+                history: tradeHistory,
+                balance: accountBalance,
                 queue_depth: signalQueue.length,
                 last_heartbeat: Date.now() - lastHeartbeat
             }));

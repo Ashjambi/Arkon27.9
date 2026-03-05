@@ -10,9 +10,13 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@google/genai": "^1.39.0",
+    "mathjs": "^15.1.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "@google/genai": "^1.39.0"
+    "recharts": "^3.7.0",
+    "simple-statistics": "^7.8.8",
+    "yahoo-finance2": "^3.13.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

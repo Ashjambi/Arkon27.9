@@ -1,31 +1,33 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext } from './services/deribitService';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { RiskDashboard } from './src/components/RiskDashboard';
+import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext, testConnection } from './src/services/deribitService';
 import { generateSignal } from './services/tradingAlgo';
 import { sendToWebhook, checkBridgeStatus, fetchBridgeState, clearRemoteBridge } from './services/webhookService';
 import { sendTestMessage, sendSignalToTelegram } from './services/telegramService';
 import { getIncomingHighImpactEvents, checkNewsImpactStatus, NewsStatus } from './services/newsService';
 import { TradingSignal, AppConfig, LogEntry, LogType, MarketAnalysisState, EconomicEvent, SignalDirection, SignalStrength } from './types';
-import { MQL5_CODE } from './utils/mqlCode';
-import { BRIDGE_CODE } from './utils/bridgeCode';
+import { MQL5_CODE, BRIDGE_CODE } from './utils/mqlCode';
 import MarketStats from './components/MarketStats';
 import TradeLog from './components/TradeLog';
 import SignalCard from './components/SignalCard';
 import NewsRadar from './components/NewsRadar';
 import HistoryTable from './components/HistoryTable';
+import { backtestingEngine } from './src/quant/simulation';
 
-const CURRENT_VERSION = '45.6.0-TURBO-EXEC'; 
+const CURRENT_VERSION = '45.5.0-TURBO-EXEC'; 
 
 const DEFAULT_CONFIG: AppConfig = {
   telegramBotToken: '',
   telegramChatId: '',
   enableTelegramAlerts: true,
-  webhookUrl: 'http://localhost:3000',
+  webhookUrl: 'http://127.0.0.1:3000',
   webhookSecret: 'ARKON_SECURE_2025',
   bridgeLatencyThreshold: 500,
   autoExecution: true,
   hunterMode: true,
-  minSignalScore: 74, // تم الخفض من 78 لتسريع الدخول
+  minSignalScore: 85, 
   cooldownHours: 1,
   cooldownSameAssetMins: 30,
   riskRewardRatio: 2.5,
@@ -42,23 +44,29 @@ const DEFAULT_CONFIG: AppConfig = {
   trailingStartPoints: 120,
   trailingStepPoints: 40,
   autoHedgeEnabled: true,
-  hedgeRatio: 0.5,
+  hedgeRatio: 0.7,
   flipEnabled: true,
   flipSensitivityScore: 85,
   newsBypassMinutes: 45,
   newsCooldownMinutes: 90,
   blockOnMediumImpact: false,
   disableInitialSL: true, 
-  useVirtualSL: false
+  useVirtualSL: true
 };
 
 const App: React.FC = () => {
   const [config, setConfig] = useState<AppConfig>(() => {
-    const saved = localStorage.getItem(`arkon_config_v${CURRENT_VERSION}`);
-    return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+    try {
+        const saved = localStorage.getItem(`arkon_config_v${CURRENT_VERSION}`);
+        return saved ? JSON.parse(saved) : DEFAULT_CONFIG;
+    } catch (e) {
+        return DEFAULT_CONFIG;
+    }
   });
 
   const [managedTrades, setManagedTrades] = useState<any[]>([]); 
+  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
+  const [balanceHistory, setBalanceHistory] = useState<number[]>([100000]);
   const [logs, setLogs] = useState<LogEntry[]>([
       { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [TURBO MODE] ACTIVE.` }
   ]);
@@ -68,12 +76,18 @@ const App: React.FC = () => {
   const [newsGuard, setNewsGuard] = useState<NewsStatus>({isPaused: false, reason: 'NORMAL', remainingMs: 0});
   const [activeTab, setActiveTab] = useState<'DASHBOARD' | 'HISTORY'>('DASHBOARD');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'ENGINE' | 'RISK' | 'SAFETY' | 'CHASE' | 'STRATEGY' | 'NEWS' | 'RELAY' | 'SYSTEM' | 'MQL5'>('ENGINE');
+  const [settingsTab, setSettingsTab] = useState<'ENGINE' | 'RISK' | 'SAFETY' | 'CHASE' | 'STRATEGY' | 'NEWS' | 'RELAY' | 'SYSTEM' | 'MQL5' | 'BRIDGE'>('ENGINE');
   const [bridgeStatus, setBridgeStatus] = useState<boolean | null>(null);
   const [signals, setSignals] = useState<TradingSignal[]>([]);
   const sendingRef = useRef<Record<string, boolean>>({});
   const sentSignalsRef = useRef<Set<string>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [backtestResult, setBacktestResult] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+    // ... (بقية الكود)
+
 
   const addLog = useCallback((message: string, type: LogType = 'INFO', details?: string | object) => {
       setLogs(prev => [{ id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type, message, details }, ...prev].slice(200)); 
@@ -81,6 +95,34 @@ const App: React.FC = () => {
 
   useEffect(() => {
     localStorage.setItem(`arkon_config_v${CURRENT_VERSION}`, JSON.stringify(config));
+    
+    // جلب بيانات Deribit للرسم البياني والمحاكاة
+    async function fetchDashboardData() {
+        setLoading(true);
+        try {
+            const candlesBTC = await fetchCandles('BTC-PERPETUAL', '60');
+            const candlesETH = await fetchCandles('ETH-PERPETUAL', '60');
+            
+            if (candlesBTC?.close && candlesETH?.close) {
+                const data = candlesBTC.close.slice(-100).map((closeBTC, i) => ({
+                    name: i,
+                    BTC: closeBTC,
+                    ETH: candlesETH.close[candlesETH.close.length - 100 + i],
+                    Spread: closeBTC - (candlesETH.close[candlesETH.close.length - 100 + i] || 0)
+                }));
+                setChartData(data);
+                
+                // تشغيل المحاكاة على بيانات Deribit
+                const result = backtestingEngine.runBacktest(candlesBTC.close, candlesETH.close);
+                setBacktestResult(result);
+            }
+        } catch (error) {
+            console.error("Error fetching Deribit data for dashboard:", error);
+        } finally {
+            setLoading(false);
+        }
+    }
+    fetchDashboardData();
   }, [config]);
 
   const handleSendSignal = useCallback(async (originalSignal: any, actionType: any = 'ENTRY'): Promise<boolean> => {
@@ -91,8 +133,8 @@ const App: React.FC = () => {
     
     // Auto-map action based on live state if not overridden
     if (actionType === 'ENTRY') {
-        const assetPure = originalSignal.asset.split('-')[0];
-        const assetTrades = managedTrades.filter(t => t.asset.includes(assetPure));
+        const assetPure = originalSignal?.asset?.split('-')[0] || '';
+        const assetTrades = managedTrades.filter(t => t?.asset?.includes(assetPure));
         const hasOppositeTrade = assetTrades.some(t => t.direction !== originalSignal.direction);
         
         if (hasOppositeTrade) {
@@ -102,7 +144,7 @@ const App: React.FC = () => {
             }
         } else if (assetTrades.length > 0) {
             if (assetTrades.length < config.maxOpenTrades) {
-                actionType = 'BOOST';
+                actionType = 'ENTRY';
             } else {
                 addLog(`⛔ Layer Block: Max capacity for ${assetPure}`, 'RISK');
                 return false;
@@ -110,13 +152,13 @@ const App: React.FC = () => {
         }
     }
 
-    if (['ENTRY', 'BOOST', 'HEDGE'].includes(actionType) && managedTrades.length >= config.maxOpenTrades) {
+    if (actionType === 'ENTRY' && managedTrades.length >= config.maxOpenTrades) {
         addLog(`تم بلوغ الحد الأقصى للصفقات المسموح به (${config.maxOpenTrades})`, 'RISK');
         return false;
     }
 
     // Risk Management: Equity Protection
-    if (['ENTRY', 'BOOST', 'HEDGE'].includes(actionType)) {
+    if (actionType === 'ENTRY') {
         const currentTotalLots = managedTrades.length * config.fixedLotSize;
         if (currentTotalLots + config.fixedLotSize > config.equityProtectionPercent) {
             addLog(`⛔ Risk Block: Equity Protection Limit Reached`, 'RISK');
@@ -132,20 +174,20 @@ const App: React.FC = () => {
     const signalToSend = { ...originalSignal };
     
     // فرض تصفير الوقف إذا كان الهيدج أو خيار تعطيل الستوب مفعلاً
-    if (['ENTRY', 'BOOST', 'HEDGE', 'FLIP'].includes(actionType) && (config.autoHedgeEnabled || config.disableInitialSL)) {
+    if (actionType === 'ENTRY' && (config.autoHedgeEnabled || config.disableInitialSL)) {
         signalToSend.stopLoss = 0;
         signalToSend.sl = 0; // تصفير كلا الحقلين لضمان عدم الالتباس
         addLog(`🛡️ نظام الهيدج نِشط: تم مسح الستوب لوز من أمر التنفيذ`, 'HEDGE');
     }
 
     try {
-        const result = await sendToWebhook(signalToSend, config.webhookUrl, config.maxAllocationPerTradePercent, actionType, config.fixedLotSize, config.webhookSecret);
+        const result = await sendToWebhook(signalToSend, config.webhookUrl, config.maxAllocationPerTradePercent, actionType, config.fixedLotSize, config.webhookSecret, config.partialClosePercent);
         if (result.success) {
             addLog(`🚀 تم تنفيذ: ${actionType} لـ ${signalToSend.asset || 'System'}`, 'EXEC');
             if (config.enableTelegramAlerts && config.telegramBotToken) {
                 sendSignalToTelegram(signalToSend, config.telegramChatId, config.telegramBotToken, actionType, "", config.webhookUrl).catch(() => {});
             }
-            sentSignalsRef.current.add(signalToSend.id);
+            if (actionType === 'ENTRY') sentSignalsRef.current.add(signalToSend.id);
             return true;
         }
     } catch (err) { addLog(`خطأ في الوصول للجسر`, 'ERROR'); } 
@@ -160,9 +202,45 @@ const App: React.FC = () => {
       const isOnline = await checkBridgeStatus(config.webhookUrl);
       setBridgeStatus(isOnline);
       const bridgeState = await fetchBridgeState(config.webhookUrl);
-      if (bridgeState && bridgeState.positions) setManagedTrades(bridgeState.positions);
+      let dailyLossReached = false;
+      if (bridgeState) {
+          if (bridgeState.positions) setManagedTrades(Array.isArray(bridgeState.positions) ? bridgeState.positions : []);
+          if (bridgeState.history) {
+              const history = Array.isArray(bridgeState.history) ? bridgeState.history : [];
+              setTradeHistory(history);
+              const today = new Date().setHours(0, 0, 0, 0);
+              const dailyPnL = history
+                  .filter((t: any) => t.timestamp >= today)
+                  .reduce((acc: number, t: any) => acc + (t.pnlPoints || 0), 0);
+              
+              if (bridgeState.balance) {
+                  setBalanceHistory(prev => [...prev.slice(-99), bridgeState.balance]);
+              }
+              
+              if (config.dailyLossLimitUSD > 0 && dailyPnL <= -config.dailyLossLimitUSD) {
+                  dailyLossReached = true;
+                  if (!sendingRef.current['DAILY_LOSS_LOG']) {
+                      addLog(`🛑 تم إيقاف التداول: تم الوصول للحد الأقصى للخسارة اليومية ($${Math.abs(dailyPnL).toFixed(2)})`, 'RISK');
+                      sendingRef.current['DAILY_LOSS_LOG'] = true;
+                  }
+              } else if (config.maxDrawdownDailyPercent > 0 && bridgeState.balance && bridgeState.balance > 0) {
+                  const drawdownPercent = (Math.abs(dailyPnL) / bridgeState.balance) * 100;
+                  if (dailyPnL < 0 && drawdownPercent >= config.maxDrawdownDailyPercent) {
+                      dailyLossReached = true;
+                      if (!sendingRef.current['DAILY_LOSS_LOG']) {
+                          addLog(`🛑 تم إيقاف التداول: تم الوصول للحد الأقصى للتراجع اليومي (${drawdownPercent.toFixed(2)}%)`, 'RISK');
+                          sendingRef.current['DAILY_LOSS_LOG'] = true;
+                      }
+                  } else {
+                      sendingRef.current['DAILY_LOSS_LOG'] = false;
+                  }
+              } else {
+                  sendingRef.current['DAILY_LOSS_LOG'] = false;
+              }
+          }
+      }
       
-      const events = await getIncomingHighImpactEvents();
+      const events = await getIncomingHighImpactEvents(config.blockOnMediumImpact);
       setNewsEvents(events);
       const guardResult = checkNewsImpactStatus(events, config.newsBypassMinutes, config.newsCooldownMinutes);
       setNewsGuard(guardResult);
@@ -170,13 +248,13 @@ const App: React.FC = () => {
       const processAsset = async (asset: 'BTC' | 'ETH') => {
         try {
             const summaries = await fetchMarketSummary(asset);
-            const perp = summaries.find(s => s.instrument_name.includes('PERPETUAL'));
+            const perp = summaries.find(s => s?.instrument_name?.includes('PERPETUAL'));
             if (perp) {
                 const assetName = perp.instrument_name;
                 
                 // Check SECURE logic against real managed trades from bridge
                 managedTrades.forEach(trade => {
-                   const tradeAsset = trade.asset.includes(asset) ? assetName : null;
+                   const tradeAsset = trade?.asset?.includes(asset) ? assetName : null;
                    
                    if (tradeAsset && trade.pnl && trade.pnl >= config.secureThresholdUSD) {
                        const secureId = `SECURE-${trade.ticket}-${Math.floor(Date.now() / 60000)}`; 
@@ -196,14 +274,14 @@ const App: React.FC = () => {
                   fetchDVOL(asset), fetchOptionsVolume(asset), fetchCandles(perp.instrument_name, '15'), 
                   fetchOrderBook(perp.instrument_name), fetchHistoricalContext(perp.instrument_name)
                 ]);
-                const { signal, analysis } = generateSignal(asset, perp, summaries, candles, dailyCandles, orderBook, dvol, optVol);
-                const enrichedAnalysis = { ...analysis, isNewsPaused: guardResult.isPaused, activeEvent: guardResult.event };
+                const { signal, analysis } = generateSignal(asset, perp, summaries, candles, dailyCandles, orderBook, dvol, optVol, config);
+                const enrichedAnalysis = { ...analysis, isNewsPaused: guardResult.isPaused || dailyLossReached, activeEvent: guardResult.event };
                 if (asset === 'BTC') setBtcAnalysis(enrichedAnalysis); 
                 else setEthAnalysis(enrichedAnalysis);
                 
                 if (signal && !sentSignalsRef.current.has(signal.id)) {
                     setSignals(prev => [signal, ...prev].slice(0, 50));
-                    if (config.autoExecution && !guardResult.isPaused) {
+                    if (config.autoExecution && !guardResult.isPaused && !dailyLossReached) {
                         if (!config.hunterMode || signal.qualityScore >= config.minSignalScore) {
                             handleSendSignal(signal);
                         }
@@ -250,7 +328,7 @@ const App: React.FC = () => {
                         {id: 'RELAY', label: 'التليجرام', icon: 'paper-plane'},
                         {id: 'SYSTEM', label: 'الجسر والأمان', icon: 'link'},
                         {id: 'MQL5', label: 'كود MT5', icon: 'code'},
-                        {id: 'BRIDGE', label: 'كود الجسر (Node)', icon: 'server'}
+                        {id: 'BRIDGE', label: 'كود الجسر', icon: 'server'}
                     ].map(tab => (
                         <button 
                             key={tab.id} 
@@ -534,10 +612,20 @@ const App: React.FC = () => {
                             <div className="space-y-12">
                                 <h2 className="text-5xl font-black text-white italic tracking-tighter">كود الجسر (Node.js)</h2>
                                 <div className="space-y-6">
-                                    <div className="p-8 bg-blue-500/10 border border-blue-500/20 rounded-3xl flex items-center gap-6">
-                                        <i className="fas fa-info-circle text-blue-500 text-2xl"></i>
-                                        <p className="text-xs text-blue-200/80 leading-relaxed font-bold">هذا هو كود الجسر المحدث الذي يحل مشكلة الاتصال مع المتصفحات (CORS/Private Network). احفظه كـ arkon-bridge.js وشغله عبر Node.js.</p>
+                                    <div className="p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-3xl flex items-center gap-6">
+                                        <i className="fas fa-server text-emerald-500 text-2xl"></i>
+                                        <p className="text-xs text-emerald-200/80 leading-relaxed font-bold">هذا هو كود الجسر (Bridge) الذي يعمل على Node.js. تأكد من تشغيله باستخدام `node arkon-bridge.js`.</p>
                                     </div>
+                                    <button 
+                                        onClick={async () => {
+                                            addLog("🔍 جاري اختبار الاتصال بـ Deribit...", "SYSTEM");
+                                            const res = await testConnection();
+                                            addLog(res ? "✅ الاتصال بـ Deribit ناجح" : "❌ فشل الاتصال بـ Deribit", res ? "SYSTEM" : "ERROR");
+                                        }}
+                                        className="w-full py-6 bg-amber-500 text-black font-black rounded-3xl hover:bg-amber-400 transition-all uppercase tracking-widest text-sm"
+                                    >
+                                        اختبار اتصال Deribit API
+                                    </button>
                                     <div className="relative group">
                                         <pre className="bg-black/60 p-10 rounded-3xl border border-zinc-800 font-mono text-[11px] text-zinc-400 overflow-x-auto max-h-[450px] custom-scrollbar text-left group-hover:border-zinc-700 transition-all" dir="ltr">
                                             {BRIDGE_CODE}
@@ -547,7 +635,7 @@ const App: React.FC = () => {
                                                 navigator.clipboard.writeText(BRIDGE_CODE);
                                                 addLog("📋 تم نسخ كود الجسر للحافظة", "SYSTEM");
                                             }}
-                                            className="absolute top-8 right-8 px-8 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase hover:bg-blue-500 transition-all shadow-2xl active:scale-90"
+                                            className="absolute top-8 right-8 px-8 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase hover:bg-emerald-500 transition-all shadow-2xl active:scale-90"
                                         >
                                             <i className="fas fa-copy mr-2"></i> نسخ الكود بالكامل
                                         </button>
@@ -602,13 +690,40 @@ const App: React.FC = () => {
 
       {/* View Switcher */}
       {activeTab === 'HISTORY' ? (
-          <HistoryTable trades={[]} />
+          <HistoryTable trades={tradeHistory} />
       ) : (
           <main className="grid grid-cols-1 xl:grid-cols-12 gap-10">
               <div className="xl:col-span-8 space-y-10">
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                       <MarketStats title="BTC/USD ALGO" state={btcAnalysis} />
                       <MarketStats title="ETH/USD ALGO" state={ethAnalysis} />
+                  </div>
+                  
+                  <RiskDashboard balanceHistory={balanceHistory} />
+
+                  {/* إضافة الرسم البياني لبيانات Deribit */}
+                  <div className="glass-card rounded-[4rem] p-12 border border-zinc-900 bg-zinc-950/20 shadow-2xl">
+                      <h3 className="text-2xl font-black text-white italic uppercase tracking-tighter mb-8">تحليل Deribit (BTC vs ETH)</h3>
+                      <ResponsiveContainer width="100%" height={400}>
+                          <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                              <XAxis dataKey="name" stroke="#666" />
+                              <YAxis stroke="#666" />
+                              <Tooltip contentStyle={{backgroundColor: '#000', borderColor: '#333'}} />
+                              <Legend />
+                              <Line type="monotone" dataKey="BTC" stroke="#f59e0b" dot={false} />
+                              <Line type="monotone" dataKey="ETH" stroke="#8b5cf6" dot={false} />
+                          </LineChart>
+                      </ResponsiveContainer>
+                      {backtestResult && (
+                          <div className="mt-8 p-6 bg-zinc-900 rounded-2xl border border-zinc-800">
+                              <h4 className="text-white font-black uppercase tracking-widest text-sm mb-4">نتائج المحاكاة الكمية</h4>
+                              <div className="flex gap-10">
+                                  <p className="text-emerald-500 font-mono font-black">الرصيد النهائي: ${backtestResult.finalBalance.toFixed(2)}</p>
+                                  <p className="text-emerald-500 font-mono font-black">إجمالي العائد: {backtestResult.totalReturn.toFixed(2)}%</p>
+                              </div>
+                          </div>
+                      )}
                   </div>
 
                   <div className="glass-card rounded-[4rem] p-12 border border-zinc-900 bg-zinc-950/20 shadow-2xl relative overflow-hidden">
@@ -665,13 +780,13 @@ const App: React.FC = () => {
                                         <div className="flex items-center gap-5">
                                             <div className={`w-2 h-12 rounded-full ${trade.direction === 'LONG' ? 'bg-emerald-500 shadow-[0_0_15px_#10b981]' : 'bg-rose-500 shadow-[0_0_15px_#f43f5e]'}`}></div>
                                             <div>
-                                                <h4 className="text-lg font-black text-white uppercase tracking-tighter">{trade.asset.split('.')[0]}</h4>
-                                                <span className="text-[10px] font-mono text-zinc-600">Entry: ${trade.entryPrice.toLocaleString()}</span>
+                                                <h4 className="text-lg font-black text-white uppercase tracking-tighter">{trade?.asset?.split('.')[0] || 'UNKNOWN'}</h4>
+                                                <span className="text-[10px] font-mono text-zinc-600">Entry: ${(trade.entryPrice || 0).toLocaleString()}</span>
                                             </div>
                                         </div>
                                         <div className="text-right">
-                                            <span className={`text-3xl font-mono font-black ${trade.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                                {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}
+                                            <span className={`text-3xl font-mono font-black ${(trade.pnl || 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                {(trade.pnl || 0) >= 0 ? '+' : ''}${(trade.pnl || 0).toFixed(2)}
                                             </span>
                                             <div className="text-[8px] font-black text-zinc-700 uppercase mt-1 tracking-widest">Unrealized PnL</div>
                                         </div>

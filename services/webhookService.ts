@@ -24,7 +24,7 @@ export const clearRemoteBridge = async (url: string): Promise<boolean> => {
     } catch (e) { return false; }
 };
 
-export const fetchBridgeState = async (url: string): Promise<{positions: any[], queue_depth: number} | null> => {
+export const fetchBridgeState = async (url: string): Promise<{positions: any[], history?: any[], balance?: number, queue_depth: number} | null> => {
     if (!url) return null;
     try {
         const response = await fetch(`${url}/state`, { method: 'GET', mode: 'cors' });
@@ -39,7 +39,8 @@ export const sendToWebhook = async (
   executedRisk: number,
   actionType: 'ENTRY' | 'FLIP' | 'HEDGE' | 'BOOST' | 'EXIT' | 'UPDATE_SL' | 'SECURE' = 'ENTRY',
   lotSize: number = 0,
-  secret: string = ''
+  secret: string = '',
+  partialPercent: number = 50.0
 ): Promise<{success: boolean; error?: string}> => {
   if (!url) return { success: false, error: "URL missing" };
   
@@ -75,7 +76,7 @@ export const sendToWebhook = async (
         action_type: actionType, 
         close_opposite: actionType === 'FLIP',
         secure_amount: isSecureAction ? 1.0 : 0, 
-        partial_percent: isSecureAction ? 50.0 : 0, 
+        partial_percent: isSecureAction ? partialPercent : 0, 
         timestamp: Date.now(),
         secret: secret
       })

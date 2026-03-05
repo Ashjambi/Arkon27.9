@@ -1,5 +1,5 @@
 
-import { TradingSignal, SignalDirection, SignalStrength, DeribitBookSummary, DeribitCandleData, DeribitOrderBook, MarketAnalysisState, LogicGate } from '../types';
+import { TradingSignal, SignalDirection, SignalStrength, DeribitBookSummary, DeribitCandleData, DeribitOrderBook, MarketAnalysisState, LogicGate, AppConfig } from '../types';
 
 const mean = (data: number[]) => data.length === 0 ? 0 : data.reduce((a, b) => a + b, 0) / data.length;
 const stdDev = (data: number[]) => {
@@ -68,7 +68,7 @@ const calculateRSI = (closes: number[], period: number = 14): number => {
 
 // حساب توازن دفتر الأوامر (Order Book Imbalance)
 const calculateImbalance = (orderBook: DeribitOrderBook | null): number => {
-    if (!orderBook) return 0;
+    if (!orderBook || !Array.isArray(orderBook.bids) || !Array.isArray(orderBook.asks)) return 0;
     const totalBids = orderBook.bids.reduce((acc, b) => acc + b[1], 0);
     const totalAsks = orderBook.asks.reduce((acc, a) => acc + a[1], 0);
     if (totalBids + totalAsks === 0) return 0;
@@ -83,17 +83,18 @@ export const generateSignal = (
   candles1D: DeribitCandleData | null, 
   orderBook: DeribitOrderBook | null, 
   dvol: number, 
-  optionsVolume: number 
+  optionsVolume: number,
+  config: AppConfig
 ): { signal: TradingSignal | null; analysis: MarketAnalysisState } => {
   
   const price = summary.last || 0;
   const fundingRate = summary.funding_8h || 0;
   
-  const dailyHistory = candles1D?.close.slice(-100) || [];
+  const dailyHistory = Array.isArray(candles1D?.close) ? candles1D.close.slice(-100) : [];
   const dailySma50 = mean(dailyHistory.slice(-50));
   const dailyTrend: 'UP' | 'DOWN' | 'NEUTRAL' = dailyHistory.length < 50 ? 'NEUTRAL' : (price > dailySma50 ? 'UP' : 'DOWN');
 
-  const m15Closes = candles15M?.close.slice(-60) || [];
+  const m15Closes = Array.isArray(candles15M?.close) ? candles15M.close.slice(-60) : [];
   const hurst = calculateHurst(m15Closes);
   const zScore = calculateZScore(price, m15Closes);
   const imbalance = calculateImbalance(orderBook);
@@ -205,8 +206,11 @@ export const generateSignal = (
   if (!direction || qualityScore < 70) return { signal: null, analysis };
 
   const volatilityFactor = (dvol / 100) * price * 0.008; 
-  const tp = direction === SignalDirection.LONG ? price + volatilityFactor : price - volatilityFactor;
-  const sl = direction === SignalDirection.LONG ? price - (volatilityFactor * 0.8) : price + (volatilityFactor * 0.8);
+  const slDistance = volatilityFactor * 0.8;
+  const tpDistance = slDistance * (config?.riskRewardRatio || 2.5);
+
+  const tp = direction === SignalDirection.LONG ? price + tpDistance : price - tpDistance;
+  const sl = direction === SignalDirection.LONG ? price - slDistance : price + slDistance;
 
   const signal: TradingSignal = {
     id: `ARK-${asset}-${Date.now()}`, timestamp: Date.now(), asset: summary.instrument_name, direction,
