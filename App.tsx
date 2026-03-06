@@ -1,8 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { RiskDashboard } from './src/components/RiskDashboard';
-import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext, testConnection } from './src/services/deribitService';
+import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext } from './services/deribitService';
 import { generateSignal } from './services/tradingAlgo';
 import { sendToWebhook, checkBridgeStatus, fetchBridgeState, clearRemoteBridge } from './services/webhookService';
 import { sendTestMessage, sendSignalToTelegram } from './services/telegramService';
@@ -14,7 +12,6 @@ import TradeLog from './components/TradeLog';
 import SignalCard from './components/SignalCard';
 import NewsRadar from './components/NewsRadar';
 import HistoryTable from './components/HistoryTable';
-import { backtestingEngine } from './src/quant/simulation';
 
 const CURRENT_VERSION = '45.5.0-TURBO-EXEC'; 
 
@@ -22,12 +19,12 @@ const DEFAULT_CONFIG: AppConfig = {
   telegramBotToken: '',
   telegramChatId: '',
   enableTelegramAlerts: true,
-  webhookUrl: '/api/bridge',
+  webhookUrl: 'http://127.0.0.1:3000',
   webhookSecret: 'ARKON_SECURE_2025',
   bridgeLatencyThreshold: 500,
   autoExecution: true,
   hunterMode: true,
-  minSignalScore: 85, 
+  minSignalScore: 74, // تم الخفض من 78 لتسريع الدخول
   cooldownHours: 1,
   cooldownSameAssetMins: 30,
   riskRewardRatio: 2.5,
@@ -44,14 +41,14 @@ const DEFAULT_CONFIG: AppConfig = {
   trailingStartPoints: 120,
   trailingStepPoints: 40,
   autoHedgeEnabled: true,
-  hedgeRatio: 0.7,
+  hedgeRatio: 0.5,
   flipEnabled: true,
   flipSensitivityScore: 85,
   newsBypassMinutes: 45,
   newsCooldownMinutes: 90,
   blockOnMediumImpact: false,
   disableInitialSL: true, 
-  useVirtualSL: true
+  useVirtualSL: false
 };
 
 const App: React.FC = () => {
@@ -66,7 +63,6 @@ const App: React.FC = () => {
 
   const [managedTrades, setManagedTrades] = useState<any[]>([]); 
   const [tradeHistory, setTradeHistory] = useState<any[]>([]);
-  const [balanceHistory, setBalanceHistory] = useState<number[]>([100000]);
   const [logs, setLogs] = useState<LogEntry[]>([
       { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [TURBO MODE] ACTIVE.` }
   ]);
@@ -82,12 +78,6 @@ const App: React.FC = () => {
   const sendingRef = useRef<Record<string, boolean>>({});
   const sentSignalsRef = useRef<Set<string>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
-  const [chartData, setChartData] = useState<any[]>([]);
-  const [backtestResult, setBacktestResult] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-
-    // ... (بقية الكود)
-
 
   const addLog = useCallback((message: string, type: LogType = 'INFO', details?: string | object) => {
       setLogs(prev => [{ id: Math.random().toString(36).substr(2, 9), timestamp: Date.now(), type, message, details }, ...prev].slice(200)); 
@@ -95,34 +85,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     localStorage.setItem(`arkon_config_v${CURRENT_VERSION}`, JSON.stringify(config));
-    
-    // جلب بيانات Deribit للرسم البياني والمحاكاة
-    async function fetchDashboardData() {
-        setLoading(true);
-        try {
-            const candlesBTC = await fetchCandles('BTC-PERPETUAL', '60');
-            const candlesETH = await fetchCandles('ETH-PERPETUAL', '60');
-            
-            if (candlesBTC?.close && candlesETH?.close) {
-                const data = candlesBTC.close.slice(-100).map((closeBTC, i) => ({
-                    name: i,
-                    BTC: closeBTC,
-                    ETH: candlesETH.close[candlesETH.close.length - 100 + i],
-                    Spread: closeBTC - (candlesETH.close[candlesETH.close.length - 100 + i] || 0)
-                }));
-                setChartData(data);
-                
-                // تشغيل المحاكاة على بيانات Deribit
-                const result = backtestingEngine.runBacktest(candlesBTC.close, candlesETH.close);
-                setBacktestResult(result);
-            }
-        } catch (error) {
-            console.error("Error fetching Deribit data for dashboard:", error);
-        } finally {
-            setLoading(false);
-        }
-    }
-    fetchDashboardData();
   }, [config]);
 
   const handleSendSignal = useCallback(async (originalSignal: any, actionType: any = 'ENTRY'): Promise<boolean> => {
@@ -212,10 +174,6 @@ const App: React.FC = () => {
               const dailyPnL = history
                   .filter((t: any) => t.timestamp >= today)
                   .reduce((acc: number, t: any) => acc + (t.pnlPoints || 0), 0);
-              
-              if (bridgeState.balance) {
-                  setBalanceHistory(prev => [...prev.slice(-99), bridgeState.balance]);
-              }
               
               if (config.dailyLossLimitUSD > 0 && dailyPnL <= -config.dailyLossLimitUSD) {
                   dailyLossReached = true;
@@ -616,16 +574,6 @@ const App: React.FC = () => {
                                         <i className="fas fa-server text-emerald-500 text-2xl"></i>
                                         <p className="text-xs text-emerald-200/80 leading-relaxed font-bold">هذا هو كود الجسر (Bridge) الذي يعمل على Node.js. تأكد من تشغيله باستخدام `node arkon-bridge.js`.</p>
                                     </div>
-                                    <button 
-                                        onClick={async () => {
-                                            addLog("🔍 جاري اختبار الاتصال بـ Deribit...", "SYSTEM");
-                                            const res = await testConnection();
-                                            addLog(res ? "✅ الاتصال بـ Deribit ناجح" : "❌ فشل الاتصال بـ Deribit", res ? "SYSTEM" : "ERROR");
-                                        }}
-                                        className="w-full py-6 bg-amber-500 text-black font-black rounded-3xl hover:bg-amber-400 transition-all uppercase tracking-widest text-sm"
-                                    >
-                                        اختبار اتصال Deribit API
-                                    </button>
                                     <div className="relative group">
                                         <pre className="bg-black/60 p-10 rounded-3xl border border-zinc-800 font-mono text-[11px] text-zinc-400 overflow-x-auto max-h-[450px] custom-scrollbar text-left group-hover:border-zinc-700 transition-all" dir="ltr">
                                             {BRIDGE_CODE}
@@ -697,33 +645,6 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
                       <MarketStats title="BTC/USD ALGO" state={btcAnalysis} />
                       <MarketStats title="ETH/USD ALGO" state={ethAnalysis} />
-                  </div>
-                  
-                  <RiskDashboard balanceHistory={balanceHistory} />
-
-                  {/* إضافة الرسم البياني لبيانات Deribit */}
-                  <div className="glass-card rounded-[4rem] p-12 border border-zinc-900 bg-zinc-950/20 shadow-2xl">
-                      <h3 className="text-2xl font-black text-white italic uppercase tracking-tighter mb-8">تحليل Deribit (BTC vs ETH)</h3>
-                      <ResponsiveContainer width="100%" height={400}>
-                          <LineChart data={chartData}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                              <XAxis dataKey="name" stroke="#666" />
-                              <YAxis stroke="#666" />
-                              <Tooltip contentStyle={{backgroundColor: '#000', borderColor: '#333'}} />
-                              <Legend />
-                              <Line type="monotone" dataKey="BTC" stroke="#f59e0b" dot={false} />
-                              <Line type="monotone" dataKey="ETH" stroke="#8b5cf6" dot={false} />
-                          </LineChart>
-                      </ResponsiveContainer>
-                      {backtestResult && (
-                          <div className="mt-8 p-6 bg-zinc-900 rounded-2xl border border-zinc-800">
-                              <h4 className="text-white font-black uppercase tracking-widest text-sm mb-4">نتائج المحاكاة الكمية</h4>
-                              <div className="flex gap-10">
-                                  <p className="text-emerald-500 font-mono font-black">الرصيد النهائي: ${backtestResult.finalBalance.toFixed(2)}</p>
-                                  <p className="text-emerald-500 font-mono font-black">إجمالي العائد: {backtestResult.totalReturn.toFixed(2)}%</p>
-                              </div>
-                          </div>
-                      )}
                   </div>
 
                   <div className="glass-card rounded-[4rem] p-12 border border-zinc-900 bg-zinc-950/20 shadow-2xl relative overflow-hidden">

@@ -20,104 +20,83 @@ const dataPipeline = {
     }
 };
 
-// --- Realistic Institutional Settings ---
+// --- Best Settings ---
 const BEST_SETTINGS = {
-    Z_SCORE_ENTRY: 2.0, // الدخول عند انحراف معياري 2
-    Z_SCORE_EXIT: 0.5,  // الخروج عند العودة بالقرب من المتوسط
-    STOP_LOSS_Z: 3.5, // وقف الخسارة عند انحراف معياري 3.5
-    KELLY_FRACTION: 0.15,
-    COMMISSION_RATE: 0.001,
-    SLIPPAGE_RATE: 0.0005
+    BOLLINGER_STD: 1.5,
+    POSITION_SIZE_PCT: 0.08,
+    TAKE_PROFIT: 0.005
 };
 
 const strategyArchitect = {
-    generateSignal: (spreads: number[]) => {
-        const n = spreads.length;
-        if (n < 30) return 'HOLD';
+    // Scalping: Buy at lower band, Sell at upper band
+    generateSignal: (prices: number[]) => {
+        const n = prices.length;
+        const currentPrice = prices[n - 1];
+        const meanPrice = Number(mean(prices.slice(n - 20, n)));
+        const stdPrice = Number(std(prices.slice(n - 20, n)));
+        const upperBand = meanPrice + (BEST_SETTINGS.BOLLINGER_STD * stdPrice);
+        const lowerBand = meanPrice - (BEST_SETTINGS.BOLLINGER_STD * stdPrice);
         
-        const currentSpread = spreads[n - 1];
-        const meanSpread = Number(mean(spreads.slice(n - 30, n)));
-        const stdSpread = Number(std(spreads.slice(n - 30, n)));
-        
-        const zScore = (currentSpread - meanSpread) / (stdSpread || 1);
-        
-        // DEBUG:
-        if (Math.random() < 0.01) console.log(`Spread: ${currentSpread.toFixed(2)}, Mean: ${meanSpread.toFixed(2)}, Std: ${stdSpread.toFixed(2)}, Z: ${zScore.toFixed(2)}`);
-        
-        if (zScore > BEST_SETTINGS.Z_SCORE_ENTRY) return 'SELL_SPREAD'; // بيع الفارق (بيع A، شراء B)
-        if (zScore < -BEST_SETTINGS.Z_SCORE_ENTRY) return 'BUY_SPREAD';  // شراء الفارق (شراء A، بيع B)
-        if (Math.abs(zScore) < BEST_SETTINGS.Z_SCORE_EXIT) return 'EXIT';
+        if (currentPrice < lowerBand) return 'BUY';
+        if (currentPrice > upperBand) return 'SELL';
         return 'HOLD';
     }
 };
 
-export const backtestingEngine = {
-    runBacktest: (dataA: number[], dataB: number[]) => {
+const backtestingEngine = {
+    runBacktest: (historicalData: any[], commissionRate: number = 0.001) => {
         let balance = 100000;
-        let spreadPositions = 0; 
-        let entrySpread = 0;
+        let longPositions: { price: number, shares: number }[] = [];
+        let shortPositions: { price: number, shares: number }[] = [];
         
-        const spreads = dataA.map((a, i) => a - dataB[i]);
-        
-        for (let i = 30; i < spreads.length; i++) {
-            const currentSpread = spreads[i];
-            const meanSpread = Number(mean(spreads.slice(i - 30, i)));
-            const stdSpread = Number(std(spreads.slice(i - 30, i))) || 1;
-            const zScore = (currentSpread - meanSpread) / stdSpread;
+        for (let i = 20; i < historicalData.length; i++) {
+            const tick = historicalData[i];
+            const prices = historicalData.slice(0, i).map((t: any) => t.price);
+            const signal = strategyArchitect.generateSignal(prices);
             
-            const signal = strategyArchitect.generateSignal(spreads.slice(0, i));
+            // Scalping: Using best settings
+            const positionSize = balance * BEST_SETTINGS.POSITION_SIZE_PCT;
+            const numShares = Math.max(1, Math.floor(positionSize / tick.price));
             
-            // إدارة المخاطر: وقف الخسارة
-            if (spreadPositions !== 0 && Math.abs(zScore) > BEST_SETTINGS.STOP_LOSS_Z) {
-                console.log(`[RISK] Stop-loss triggered at Z=${zScore.toFixed(2)}`);
-                const profit = (currentSpread - entrySpread) * spreadPositions * 1000;
-                balance += profit;
-                spreadPositions = 0;
-                continue;
+            if (signal === 'BUY') {
+                longPositions.push({ price: tick.price, shares: numShares });
+                balance -= (numShares * tick.price * (1 + commissionRate));
+            } else if (signal === 'SELL') {
+                shortPositions.push({ price: tick.price, shares: numShares });
+                balance += (numShares * tick.price * (1 - commissionRate));
             }
             
-            // تحديد حجم الصفقة (Position Sizing)
-            const tradeSize = (balance * BEST_SETTINGS.KELLY_FRACTION) / 1000;
-            
-            if (signal === 'BUY_SPREAD' && spreadPositions === 0) {
-                spreadPositions = 1;
-                entrySpread = currentSpread;
-                console.log(`[TRADE] Opened LONG spread at ${entrySpread.toFixed(2)} with size ${tradeSize.toFixed(2)}`);
-            } else if (signal === 'SELL_SPREAD' && spreadPositions === 0) {
-                spreadPositions = -1;
-                entrySpread = currentSpread;
-                console.log(`[TRADE] Opened SHORT spread at ${entrySpread.toFixed(2)} with size ${tradeSize.toFixed(2)}`);
-            } else if (signal === 'EXIT' && spreadPositions !== 0) {
-                const profit = (currentSpread - entrySpread) * spreadPositions * 1000 * tradeSize;
-                balance += profit;
-                console.log(`[TRADE] Closed spread at ${currentSpread.toFixed(2)}, Profit: ${profit.toFixed(2)}, Balance: ${balance.toFixed(2)}`);
-                spreadPositions = 0;
-            }
+            // Check Take Profit
+            longPositions = longPositions.filter(pos => {
+                if (tick.price >= pos.price * (1 + BEST_SETTINGS.TAKE_PROFIT)) {
+                    balance += (pos.shares * tick.price * (1 - commissionRate));
+                    return false;
+                }
+                return true;
+            });
+            shortPositions = shortPositions.filter(pos => {
+                if (tick.price <= pos.price * (1 - BEST_SETTINGS.TAKE_PROFIT)) {
+                    balance += (pos.shares * (pos.price * 2 - tick.price) * (1 - commissionRate));
+                    return false;
+                }
+                return true;
+            });
         }
-        return { finalBalance: balance, totalReturn: ((balance - 100000) / 100000) * 100 };
+        const finalValue = balance + (longPositions.reduce((sum, pos) => sum + pos.shares * historicalData[historicalData.length - 1].price, 0)) - (shortPositions.reduce((sum, pos) => sum + pos.shares * (pos.price * 2 - historicalData[historicalData.length - 1].price), 0));
+        return { finalBalance: finalValue, totalReturn: ((finalValue - 100000) / 100000) * 100 };
     }
 };
 
 async function runSimulation() {
-    console.log("--- Starting Cointegration Pairs Trading Simulation (Mean-Reverting) ---");
+    console.log("--- Starting Stress Test Simulation (Random Walk + Black Swans) ---");
+    let price = 50000;
+    const syntheticData = Array.from({ length: 1000 }, () => {
+        price += (Math.random() - 0.5) * 500;
+        if (Math.random() < 0.01) price *= (1 + (Math.random() - 0.5) * 0.2);
+        return { price };
+    });
     
-    // توليد فارق (Spread) يعود للمتوسط (Ornstein-Uhlenbeck process approximation)
-    const spreads: number[] = [];
-    let currentSpread = 0;
-    const meanSpread = 0;
-    const speed = 0.05; // سرعة العودة للمتوسط
-    
-    for(let i=0; i<1000; i++) {
-        // dSpread = speed * (mean - spread) * dt + noise
-        currentSpread += speed * (meanSpread - currentSpread) + (Math.random() - 0.5) * 2;
-        spreads.push(currentSpread);
-    }
-    
-    // محاكاة سعرين بناءً على الفارق
-    const dataA = spreads.map(s => 50000 + s/2);
-    const dataB = spreads.map(s => 50000 - s/2);
-    
-    const result = backtestingEngine.runBacktest(dataA, dataB);
+    const result = backtestingEngine.runBacktest(syntheticData);
 
     console.log("Simulation Results:");
     console.log(`Final Balance: ${result.finalBalance.toFixed(2)}`);
