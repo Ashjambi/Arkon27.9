@@ -16,13 +16,8 @@ export const backtestingEngine = {
         let balance = 100000;
         let positions = 0;
 
-        // Ensure historicalData is valid
-        if (!historicalData || historicalData.length === 0) return { finalBalance: balance, totalReturn: 0 };
-
         for (let i = 1; i < historicalData.length; i++) {
             const tick = historicalData[i];
-            if (!tick || typeof tick.price === 'undefined') continue;
-
             const signal = strategy.generateSignal(historicalData.slice(0, i).map((t: any) => t.price));
             
             const executionPrice = tick.price * (1 + (signal === 'BUY' ? slippageRate : -slippageRate));
@@ -36,9 +31,7 @@ export const backtestingEngine = {
             }
         }
         
-        const lastTick = historicalData[historicalData.length - 1];
-        const lastPrice = lastTick && lastTick.price ? lastTick.price : 0;
-        const finalValue = balance + (positions * lastPrice);
+        const finalValue = balance + (positions * historicalData[historicalData.length - 1].price);
         return { finalBalance: finalValue, totalReturn: ((finalValue - 100000) / 100000) * 100 };
     }
 };

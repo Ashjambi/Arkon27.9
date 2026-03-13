@@ -1,7 +1,6 @@
-
-
+// Execution Algo: Institutional-grade VWAP implementation
 export const executionAlgo = {
-    // Calculate VWAP: sum(price * volume) / totalVolume
+    // حساب VWAP: مجموع (السعر * الحجم) / إجمالي الحجم
     calculateVWAP: (trades: { price: number; volume: number }[]) => {
         let totalVolume = 0;
         let cumulativeValue = 0;
@@ -14,14 +13,8 @@ export const executionAlgo = {
         return totalVolume === 0 ? 0 : cumulativeValue / totalVolume;
     },
     
-    // Slice large order to minimize market impact (Iceberg logic)
+    // تقسيم الطلب الكبير إلى طلبات أصغر (Slicing)
     sliceOrder: (totalVolume: number, numberOfSlices: number) => {
-        // Implementation of Iceberg logic: show only small portion
         return Array(numberOfSlices).fill(totalVolume / numberOfSlices);
-    },
-
-    // Estimate slippage
-    estimateSlippage: (orderSize: number, liquidity: number) => {
-        return (orderSize / liquidity) * 0.01; // Simplified model
     }
 };

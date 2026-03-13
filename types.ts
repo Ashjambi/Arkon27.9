@@ -51,7 +51,7 @@ export interface MarketAnalysisState {
     yearlyHigh: number;
     yearlyLow: number;
     pricePositionRank: number; 
-    regime: 'MEAN_REVERSION' | 'MOMENTUM_TREND' | 'CHOPPY/NOISE' | 'HIGH_VOLATILITY' | 'LOW_VOLATILITY';
+    regime: 'MEAN_REVERSION' | 'MOMENTUM_TREND' | 'CHOPPY/NOISE';
     qualityScore: number;
     gates: LogicGate[];
     primaryBlocker: string;

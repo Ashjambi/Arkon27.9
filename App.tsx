@@ -1,17 +1,18 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext } from '../services/deribitService';
-import { generateSignal } from '../services/tradingAlgo';
-import { sendToWebhook, checkBridgeStatus, fetchBridgeState, clearRemoteBridge } from '../services/webhookService';
-import { sendTestMessage, sendSignalToTelegram } from '../services/telegramService';
-import { getIncomingHighImpactEvents, checkNewsImpactStatus, NewsStatus } from '../services/newsService';
-import { TradingSignal, AppConfig, LogEntry, LogType, MarketAnalysisState, EconomicEvent, SignalDirection, SignalStrength } from '../types';
-import { MQL5_CODE, BRIDGE_CODE } from '../utils/mqlCode';
-import MarketStats from '../components/MarketStats';
-import TradeLog from '../components/TradeLog';
-import SignalCard from '../components/SignalCard';
-import NewsRadar from '../components/NewsRadar';
-import HistoryTable from '../components/HistoryTable';
+import { RiskDashboard } from './src/components/RiskDashboard';
+import { fetchMarketSummary, fetchCandles, fetchDVOL, fetchOptionsVolume, fetchOrderBook, fetchHistoricalContext } from './services/deribitService';
+import { generateSignal } from './services/tradingAlgo';
+import { sendToWebhook, checkBridgeStatus, fetchBridgeState, clearRemoteBridge } from './services/webhookService';
+import { sendTestMessage, sendSignalToTelegram } from './services/telegramService';
+import { getIncomingHighImpactEvents, checkNewsImpactStatus, NewsStatus } from './services/newsService';
+import { TradingSignal, AppConfig, LogEntry, LogType, MarketAnalysisState, EconomicEvent, SignalDirection, SignalStrength } from './types';
+import { MQL5_CODE, BRIDGE_CODE } from './utils/mqlCode';
+import MarketStats from './components/MarketStats';
+import TradeLog from './components/TradeLog';
+import SignalCard from './components/SignalCard';
+import NewsRadar from './components/NewsRadar';
+import HistoryTable from './components/HistoryTable';
 
 const CURRENT_VERSION = '45.5.0-TURBO-EXEC'; 
 
@@ -24,7 +25,7 @@ const DEFAULT_CONFIG: AppConfig = {
   bridgeLatencyThreshold: 500,
   autoExecution: true,
   hunterMode: true,
-  minSignalScore: 74, // تم الخفض من 78 لتسريع الدخول
+  minSignalScore: 85, 
   cooldownHours: 1,
   cooldownSameAssetMins: 30,
   riskRewardRatio: 2.5,
@@ -41,14 +42,14 @@ const DEFAULT_CONFIG: AppConfig = {
   trailingStartPoints: 120,
   trailingStepPoints: 40,
   autoHedgeEnabled: true,
-  hedgeRatio: 0.5,
+  hedgeRatio: 0.7,
   flipEnabled: true,
   flipSensitivityScore: 85,
   newsBypassMinutes: 45,
   newsCooldownMinutes: 90,
   blockOnMediumImpact: false,
   disableInitialSL: true, 
-  useVirtualSL: false
+  useVirtualSL: true
 };
 
 const App: React.FC = () => {
@@ -63,6 +64,7 @@ const App: React.FC = () => {
 
   const [managedTrades, setManagedTrades] = useState<any[]>([]); 
   const [tradeHistory, setTradeHistory] = useState<any[]>([]);
+  const [balanceHistory, setBalanceHistory] = useState<number[]>([100000]);
   const [logs, setLogs] = useState<LogEntry[]>([
       { id: 'start', timestamp: Date.now(), type: 'SYSTEM', message: `ARKON v${CURRENT_VERSION} [TURBO MODE] ACTIVE.` }
   ]);
@@ -174,6 +176,10 @@ const App: React.FC = () => {
               const dailyPnL = history
                   .filter((t: any) => t.timestamp >= today)
                   .reduce((acc: number, t: any) => acc + (t.pnlPoints || 0), 0);
+              
+              if (bridgeState.balance) {
+                  setBalanceHistory(prev => [...prev.slice(-99), bridgeState.balance]);
+              }
               
               if (config.dailyLossLimitUSD > 0 && dailyPnL <= -config.dailyLossLimitUSD) {
                   dailyLossReached = true;
@@ -646,6 +652,8 @@ const App: React.FC = () => {
                       <MarketStats title="BTC/USD ALGO" state={btcAnalysis} />
                       <MarketStats title="ETH/USD ALGO" state={ethAnalysis} />
                   </div>
+                  
+                  <RiskDashboard balanceHistory={balanceHistory} />
 
                   <div className="glass-card rounded-[4rem] p-12 border border-zinc-900 bg-zinc-950/20 shadow-2xl relative overflow-hidden">
                       <div className="flex justify-between items-center mb-12 border-b border-zinc-900/50 pb-8">
