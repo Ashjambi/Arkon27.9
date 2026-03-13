@@ -1,4 +1,4 @@
-import { mean, std } from 'mathjs';
+import { mean } from 'mathjs';
 
 export const riskManagement = {
     // Fractional Kelly Criterion (e.g., 0.1 for conservative sizing)

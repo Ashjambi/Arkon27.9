@@ -7,7 +7,7 @@ export const portfolioOptimizer = {
         const mu = matrix(expectedReturns);
         const sigma = matrix(covarianceMatrix);
         const sigmaInv = inv(sigma);
-        const onesVec = matrix(ones(expectedReturns.length).toArray());
+        const onesVec = matrix((ones(expectedReturns.length) as any).toArray());
         
         // حساب أوزان المحفظة المثلى (تحليل مبسط)
         // هذا نموذج أولي يحتاج لتوسيع ليشمل قيوداً إضافية

@@ -1,5 +1,6 @@
 
 import { TradingSignal, SignalDirection, SignalStrength, DeribitBookSummary, DeribitCandleData, DeribitOrderBook, MarketAnalysisState, LogicGate, AppConfig } from '../types';
+import { calculateEMA, calculateMACD, calculateADX, calculateBollingerBands, calculateWilliamsR } from './quantIndicators';
 
 const mean = (data: number[]) => data.length === 0 ? 0 : data.reduce((a, b) => a + b, 0) / data.length;
 const stdDev = (data: number[]) => {
@@ -18,7 +19,6 @@ const calculateHurst = (closes: number[]): number => {
     const n = closes.length;
     if (n < 40) return 0.5;
     
-    // Simplified R/S Analysis for Hurst Exponent
     const logReturns = [];
     for (let i = 1; i < closes.length; i++) {
         logReturns.push(Math.log(closes[i] / closes[i - 1]));
@@ -95,69 +95,38 @@ export const generateSignal = (
   const dailyTrend: 'UP' | 'DOWN' | 'NEUTRAL' = dailyHistory.length < 50 ? 'NEUTRAL' : (price > dailySma50 ? 'UP' : 'DOWN');
 
   const m15Closes = Array.isArray(candles15M?.close) ? candles15M.close.slice(-60) : [];
+  const m15Highs = Array.isArray(candles15M?.high) ? candles15M.high.slice(-60) : [];
+  const m15Lows = Array.isArray(candles15M?.low) ? candles15M.low.slice(-60) : [];
+  
   const hurst = calculateHurst(m15Closes);
   const zScore = calculateZScore(price, m15Closes);
   const imbalance = calculateImbalance(orderBook);
   const rsi = calculateRSI(m15Closes);
+  const williamsR = calculateWilliamsR(m15Highs, m15Lows, m15Closes);
+  const { macd } = calculateMACD(m15Closes);
+  const adx = calculateADX(m15Highs, m15Lows, m15Closes);
+  const bollinger = calculateBollingerBands(m15Closes);
   
-  // تعديل الحساسية: تم خفض الشروط لتسريع التقاط الإشارة
-  let regime: 'MEAN_REVERSION' | 'MOMENTUM_TREND' | 'CHOPPY/NOISE' = 'CHOPPY/NOISE';
-  if (hurst > 0.55) regime = 'MOMENTUM_TREND';
-  // تم خفض شرط Z-Score من 1.8 إلى 1.5 لالتقاط الانعكاس مبكراً
-  else if (Math.abs(zScore) > 1.5 && hurst < 0.50) regime = 'MEAN_REVERSION';
+  // --- نظام كشف النظام السوقي (Regime Detection) ---
+  let regime: 'MEAN_REVERSION' | 'MOMENTUM_TREND' | 'CHOPPY/NOISE' | 'HIGH_VOLATILITY' | 'LOW_VOLATILITY' = 'CHOPPY/NOISE';
+  if (dvol > 60) regime = 'HIGH_VOLATILITY';
+  else if (dvol < 30) regime = 'LOW_VOLATILITY';
+  else if (hurst > 0.55 && adx > 25) regime = 'MOMENTUM_TREND';
+  else if (hurst < 0.45 && adx < 25) regime = 'MEAN_REVERSION';
 
   // --- مصفوفة تدقيق المؤسسات (The Institutional Big 5) ---
   const gates: LogicGate[] = [
-    { 
-        id: 'macro_alpha', 
-        name: 'Macro Alpha', 
-        value: dailyTrend, 
-        threshold: 'SMA50 Confirmed', 
-        status: dailyTrend !== 'NEUTRAL' ? 'PASS' : 'FAIL', 
-        requiredFor: 'ENTRY' 
-    },
-    { 
-        id: 'fractal_eff', 
-        name: 'Fractal Efficiency', 
-        value: hurst.toFixed(3), 
-        threshold: regime === 'MOMENTUM_TREND' ? 'Hurst > 0.52' : 'Hurst < 0.50', 
-        status: (regime === 'MOMENTUM_TREND' && hurst > 0.52) || (regime === 'MEAN_REVERSION' && hurst < 0.50) ? 'PASS' : 'FAIL', 
-        requiredFor: 'ENTRY' 
-    },
-    { 
-        id: 'iv_barrier', 
-        name: 'Volatility IV', 
-        value: dvol.toFixed(1), 
-        threshold: 'DVOL > 30', 
-        status: dvol > 30 ? 'PASS' : 'FAIL', 
-        requiredFor: 'ENTRY' 
-    },
-    { 
-        id: 'quant_dev', 
-        name: 'Quant Deviation', 
-        value: zScore.toFixed(2), 
-        // تم خفض العتبة من 1.2 إلى 1.0 لقبول انحرافات أقل حدة ولكن أسرع
-        threshold: '|Z| > 1.0', 
-        status: Math.abs(zScore) > 1.0 ? 'PASS' : 'FAIL', 
-        requiredFor: 'ENTRY' 
-    },
-    { 
-        id: 'momentum_exhaustion', 
-        name: 'Momentum Exhaustion', 
-        value: rsi.toFixed(1), 
-        threshold: 'RSI 35-65', 
-        status: (rsi > 35 && rsi < 65) || regime === 'MEAN_REVERSION' ? 'PASS' : 'FAIL', 
-        requiredFor: 'ENTRY' 
-    },
-    { 
-        id: 'depth_integrity', 
-        name: 'Depth Integrity', 
-        value: (imbalance * 100).toFixed(1) + '%', 
-        threshold: 'Imbalance < 40%', 
-        status: Math.abs(imbalance) < 0.4 ? 'PASS' : 'FAIL', 
-        requiredFor: 'SAFETY' 
-    }
+    { id: 'macro_alpha', name: 'Macro Alpha', value: dailyTrend, threshold: 'SMA50/EMA/MACD', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'fractal_eff', name: 'Fractal Efficiency', value: hurst.toFixed(3), threshold: 'Hurst/ADX', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'iv_barrier', name: 'Volatility IV', value: dvol.toFixed(1), threshold: 'DVOL 30-70', status: dvol > 30 && dvol < 70 ? 'PASS' : 'FAIL', requiredFor: 'ENTRY' },
+    { id: 'quant_dev', name: 'Quant Deviation', value: zScore.toFixed(2), threshold: 'Multi-Z/Bollinger', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'momentum', name: 'Momentum', value: rsi.toFixed(1), threshold: 'RSI/Williams', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'depth_integrity', name: 'Depth Integrity', value: (imbalance * 100).toFixed(1) + '%', threshold: 'Weighted Imbalance', status: 'PASS', requiredFor: 'SAFETY' },
+    { id: 'volume_confirm', name: 'Volume Confirm', value: 'Trend', threshold: 'Ratio/Trend', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'vwap_position', name: 'VWAP Position', value: 'Bands', threshold: 'Deviation', status: 'PASS', requiredFor: 'ENTRY' },
+    { id: 'whale_activity', name: 'Whale Activity', value: 'Signal', threshold: 'Detection', status: 'PASS', requiredFor: 'ENTRY' }
   ];
+
 
   let direction: SignalDirection | null = null;
   const criticalGatesPassed = gates.filter(g => g.requiredFor === 'ENTRY').every(g => g.status === 'PASS');

@@ -1,13 +1,15 @@
-// Strategy Architect: Designs institutional trading strategies
+// Strategy Thesis: Mean Reversion on BTC/ETH Perpetual Markets
+// Exploit short-term price overextensions relative to volatility.
+// Universe: BTC-PERPETUAL, ETH-PERPETUAL on Deribit.
+// Signal: Bollinger Band breach (Price > Upper Band = Sell, Price < Lower Band = Buy).
+// Exit: Reversion to Mean (Moving Average).
+
 export const strategyArchitect = {
-    // Signal generation using RSI
-    generateSignal: (prices: number[]) => {
-        const delta = prices.slice(1).map((p, i) => p - prices[i]);
-        const gain = delta.filter(d => d > 0).reduce((a, b) => a + b, 0) / 14;
-        const loss = Math.abs(delta.filter(d => d < 0).reduce((a, b) => a + b, 0)) / 14;
-        const rsi = 100 - (100 / (1 + gain / loss));
-        if (rsi < 30) return 'BUY';
-        if (rsi > 70) return 'SELL';
-        return 'HOLD';
-    }
+  thesis: "Mean Reversion on BTC/ETH Perpetual Markets",
+  universe: ["BTC-PERPETUAL", "ETH-PERPETUAL"],
+  signalLogic: "Bollinger Band breach with reversion to mean",
+  riskParameters: {
+    maxDrawdown: 0.1, // 10%
+    positionLimit: 0.05, // 5% of equity
+  }
 };
